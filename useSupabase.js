@@ -85,7 +85,10 @@ async function fetchFromSupabase(localKey, mapping) {
 
   // Array de objetos (tipo padrão)
   const rows = await db.loadAll(mapping.table)
-  return (rows || []).map(r => ({ ...r.data, id: r.id }))
+  return (rows || []).map(r => {
+    const obj = { ...r.data, id: r.id }
+    return obj
+  })
 }
 
 // ─── Sync para Supabase ──────────────────────────────────────────────────────

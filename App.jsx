@@ -232,9 +232,10 @@ function LoginScreen({ onLogin }) {
   const [mat, setMat] = useState("");
   const [pwd, setPwd] = useState("");
   const [err, setErr] = useState("");
-  const [users] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
+  const [users, , loading] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
 
   function handleLogin() {
+    if (loading) { setErr("Aguarde, carregando..."); return; }
     const u = users.find(u => u.matricula === mat && u.senha === pwd && u.ativo);
     if (!u) { setErr("Matrícula ou senha incorreta."); return; }
     onLogin(u);
@@ -253,6 +254,7 @@ function LoginScreen({ onLogin }) {
         {err && <div style={{color:"#dc2626",fontSize:12,marginBottom:10}}>{err}</div>}
         <Btn onClick={handleLogin} style={{width:"100%",padding:"10px",fontSize:14}}>Entrar</Btn>
         <div style={{marginTop:16,fontSize:11,color:"#9ca3af",textAlign:"center"}}>
+          {loading && <div style={{textAlign:"center",fontSize:12,color:"#6b7280",marginBottom:8}}>⏳ Conectando ao servidor...</div>}
           Teste: admin / admin123 · sso001 / sso123
         </div>
       </div>
