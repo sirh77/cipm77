@@ -404,7 +404,11 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
       .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtual&&f.ano===anoAtual)
       .forEach(plan=>{
         (plan.participantes||[])
-          .filter(p=>p.tipo==="FÉRIAS"&&p.status!=="suspensa"&&p.policialId)
+          .filter(p=>
+            p.tipo==="FÉRIAS" &&
+            p.status==="em_andamento" &&  // SOMENTE em andamento
+            p.policialId
+          )
           .forEach(p=>ids.add(p.policialId));
       });
     return [...ids].map(id=>officers.find(o=>o.id===id)).filter(Boolean);
@@ -417,7 +421,11 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
       .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtual&&f.ano===anoAtual)
       .forEach(plan=>{
         (plan.participantes||[])
-          .filter(p=>p.tipo==="LICENÇA-PRÊMIO"&&p.status!=="suspensa"&&p.policialId)
+          .filter(p=>
+            p.tipo==="LICENÇA-PRÊMIO" &&
+            p.status==="em_andamento" &&  // SOMENTE em andamento
+            p.policialId
+          )
           .forEach(p=>ids.add(p.policialId));
       });
     // Also from localTrabalho
