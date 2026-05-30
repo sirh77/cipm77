@@ -1,40 +1,43 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { db, KEY_MAP, isConfigured } from './supabase.js'
 
-// Cache global em memória para evitar re-fetches desnecessários
+// Cache global em memória
 const memCache = {}
 const loadingPromises = {}
 
-// Hook principal — substitui useLocalState com Supabase
 export function useSupabaseState(localKey, initialValue) {
   const mapping = KEY_MAP[localKey]
+
   const [data, setData] = useState(() => {
-    // Se já está em cache de memória, usa direto
+    // Se já em cache, usa direto
     if (memCache[localKey] !== undefined) return memCache[localKey]
-    // Fallback: tenta localStorage enquanto carrega
+    // Se Supabase configurado, não usa localStorage (espera o fetch)
+    if (isConfigured && mapping) {
+      return typeof initialValue === 'function' ? initialValue() : initialValue
+    }
+    // Sem Supabase: usa localStorage
     try {
       const stored = localStorage.getItem(localKey)
       if (stored) return JSON.parse(stored)
     } catch {}
     return typeof initialValue === 'function' ? initialValue() : initialValue
   })
-  const [loading, setLoading] = useState(!memCache[localKey])
-  const isMounted = useRef(true)
 
+  const [loading, setLoading] = useState(isConfigured && !!mapping)
+  const isMounted = useRef(true)
   useEffect(() => { isMounted.current = true; return () => { isMounted.current = false } }, [])
 
-  // Fetch inicial do Supabase
+  // Fetch do Supabase na inicialização
   useEffect(() => {
-    if (!isConfigured || !mapping || memCache[localKey] !== undefined) {
+    if (!isConfigured || !mapping) { setLoading(false); return }
+    if (memCache[localKey] !== undefined) {
+      setData(memCache[localKey])
       setLoading(false)
       return
     }
     if (!loadingPromises[localKey]) {
       loadingPromises[localKey] = fetchFromSupabase(localKey, mapping)
-        .then(result => {
-          memCache[localKey] = result
-          return result
-        })
+        .then(result => { memCache[localKey] = result; return result })
         .catch(err => {
           console.error(`[SiRH77] Erro ao carregar ${localKey}:`, err)
           const fallback = typeof initialValue === 'function' ? initialValue() : initialValue
@@ -43,10 +46,7 @@ export function useSupabaseState(localKey, initialValue) {
         })
     }
     loadingPromises[localKey].then(result => {
-      if (isMounted.current) {
-        setData(result)
-        setLoading(false)
-      }
+      if (isMounted.current) { setData(result); setLoading(false) }
     })
   }, [localKey])
 
@@ -55,9 +55,9 @@ export function useSupabaseState(localKey, initialValue) {
     setData(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater
       memCache[localKey] = next
-      // Persiste no localStorage como backup
+      // Backup no localStorage
       try { localStorage.setItem(localKey, JSON.stringify(next)) } catch {}
-      // Sincroniza com Supabase em background
+      // Sync Supabase
       if (isConfigured && mapping) {
         syncToSupabase(localKey, mapping, prev, next).catch(err =>
           console.error(`[SiRH77] Erro ao salvar ${localKey}:`, err)
@@ -70,63 +70,47 @@ export function useSupabaseState(localKey, initialValue) {
   return [data, setDataWithSync, loading]
 }
 
-// ─── Fetch do Supabase ────────────────────────────────────────────────────────
+// ─── Fetch ────────────────────────────────────────────────────────────────────
 async function fetchFromSupabase(localKey, mapping) {
   if (mapping.type === 'config') {
     const val = await db.loadConfig(mapping.key)
     return val !== null ? val : null
   }
-
   if (mapping.type === 'list') {
-    // Locations: armazenado como lista de strings
     const rows = await db.loadAll(mapping.table)
     return (rows || []).map(r => r.name || r.data?.name).filter(Boolean)
   }
-
-  // Array de objetos (tipo padrão)
   const rows = await db.loadAll(mapping.table)
-  return (rows || []).map(r => {
-    const obj = { ...r.data, id: r.id }
-    return obj
-  })
+  return (rows || []).map(r => ({ ...r.data, id: r.id }))
 }
 
-// ─── Sync para Supabase ──────────────────────────────────────────────────────
+// ─── Sync ─────────────────────────────────────────────────────────────────────
 async function syncToSupabase(localKey, mapping, prev, next) {
   if (mapping.type === 'config') {
-    await db.saveConfig(mapping.key, next)
-    return
+    await db.saveConfig(mapping.key, next); return
   }
-
   if (mapping.type === 'list') {
-    // Locations: re-insere todas as novas
     const prevSet = new Set(Array.isArray(prev) ? prev : [])
     const nextSet = new Set(Array.isArray(next) ? next : [])
-    const added = [...nextSet].filter(x => !prevSet.has(x))
-    const removed = [...prevSet].filter(x => !nextSet.has(x))
-    for (const name of added) {
+    for (const name of [...nextSet].filter(x => !prevSet.has(x))) {
       await db.req(`/${mapping.table}`, {
         method: 'POST',
-        prefer: 'return=representation,resolution=merge-duplicates',
         headers: { 'Prefer': 'return=representation,resolution=merge-duplicates' },
         body: JSON.stringify({ name }),
       }).catch(() => {})
     }
-    // Para removed: busca id e deleta
-    for (const name of removed) {
+    for (const name of [...prevSet].filter(x => !nextSet.has(x))) {
       const rows = await db.req(`/${mapping.table}?name=eq.${encodeURIComponent(name)}&select=id`)
       if (rows?.[0]?.id) await db.delete(mapping.table, rows[0].id)
     }
     return
   }
-
-  // Array: detecta inserções, updates e deleções
+  // Array: upsert changed/new, delete removed
   const prevMap = {}
   if (Array.isArray(prev)) prev.forEach(item => { if (item?.id) prevMap[item.id] = item })
   const nextMap = {}
   if (Array.isArray(next)) next.forEach(item => { if (item?.id) nextMap[item.id] = item })
 
-  // Upsert changed/new
   for (const [id, item] of Object.entries(nextMap)) {
     const prevItem = prevMap[id]
     if (!prevItem || JSON.stringify(prevItem) !== JSON.stringify(item)) {
@@ -134,16 +118,11 @@ async function syncToSupabase(localKey, mapping, prev, next) {
       await db.upsert(mapping.table, { id: Number(itemId), data: rest })
     }
   }
-
-  // Delete removed
   for (const id of Object.keys(prevMap)) {
-    if (!nextMap[id]) {
-      await db.delete(mapping.table, Number(id))
-    }
+    if (!nextMap[id]) await db.delete(mapping.table, Number(id))
   }
 }
 
-// ─── Hook de loading global ──────────────────────────────────────────────────
 export function useGlobalLoading(keys) {
   const [allLoaded, setAllLoaded] = useState(false)
   useEffect(() => {
