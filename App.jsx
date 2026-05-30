@@ -268,7 +268,6 @@ function LoginScreen({ onLogin }) {
         <Btn onClick={handleLogin} style={{width:"100%",padding:"10px",fontSize:14}}>Entrar</Btn>
         <div style={{marginTop:16,fontSize:11,color:"#9ca3af",textAlign:"center"}}>
           {loading && <div style={{textAlign:"center",fontSize:12,color:"#6b7280",marginBottom:8}}>⏳ Conectando ao servidor...</div>}
-          Teste: admin / admin123 · sso001 / sso123
         </div>
       </div>
     </div>
@@ -308,7 +307,8 @@ function TrocarSenha({ user, onDone, users, setUsers }) {
 // PERMISSÕES
 // ──────────────────────────────────────────────
 const PERMS = {
-  Admin:    {efetivo:true, sso:true, material:true, corregedoria:true, documentos:true, admin:true, editarTudo:true},
+  Admin:    {efetivo:true, sso:true, corregedoria:true, documentos:true, admin:true, editarTudo:true},
+  admin:    {efetivo:true, sso:true, corregedoria:true, documentos:true, admin:true, editarTudo:true},
   SSO:      {efetivo:true, sso:true, material:false, corregedoria:false, documentos:true, admin:false, editarTudo:false},
   SPO:      {efetivo:true, sso:true, material:false, corregedoria:false, documentos:true, admin:false, editarTudo:false},
   ALMOX:    {efetivo:true, sso:false, material:true, corregedoria:false, documentos:true, admin:false, editarTudo:false},
