@@ -235,8 +235,21 @@ function LoginScreen({ onLogin }) {
   const [users, , loading] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
 
   function handleLogin() {
-    if (loading) { setErr("Aguarde, carregando..."); return; }
-    const u = users.find(u => u.matricula === mat && u.senha === pwd && u.ativo);
+    // Always check hardcoded users first (guaranteed to work)
+    const allUsers = [
+      ...USUARIOS_INICIAIS,
+      ...(Array.isArray(users) ? users : [])
+    ];
+    // Deduplicate by matricula — prefer Supabase version
+    const seen = {};
+    const deduped = [];
+    [...(Array.isArray(users) ? users : []), ...USUARIOS_INICIAIS].forEach(u => {
+      if (u && u.matricula && !seen[u.matricula]) {
+        seen[u.matricula] = true;
+        deduped.push(u);
+      }
+    });
+    const u = deduped.find(u => u.matricula === mat && u.senha === pwd && u.ativo !== false);
     if (!u) { setErr("Matrícula ou senha incorreta."); return; }
     onLogin(u);
   }
