@@ -232,24 +232,27 @@ function LoginScreen({ onLogin }) {
   const [mat, setMat] = useState("");
   const [pwd, setPwd] = useState("");
   const [err, setErr] = useState("");
-  const [users, , loading] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
+  const [users, , loadingUsers] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
+  const [waited, setWaited] = useState(false);
+
+  // Wait up to 5 seconds for Supabase to load
+  useEffect(()=>{
+    const t = setTimeout(()=>setWaited(true), 5000);
+    return ()=>clearTimeout(t);
+  },[]);
+
+  const isReady = !loadingUsers || waited;
 
   function handleLogin() {
-    // Always check hardcoded users first (guaranteed to work)
-    const allUsers = [
-      ...USUARIOS_INICIAIS,
-      ...(Array.isArray(users) ? users : [])
-    ];
-    // Deduplicate by matricula — prefer Supabase version
-    const seen = {};
-    const deduped = [];
-    [...(Array.isArray(users) ? users : []), ...USUARIOS_INICIAIS].forEach(u => {
-      if (u && u.matricula && !seen[u.matricula]) {
-        seen[u.matricula] = true;
-        deduped.push(u);
-      }
-    });
-    const u = deduped.find(u => u.matricula === mat && u.senha === pwd && u.ativo !== false);
+    if (!isReady) { setErr("Aguardando conexão com o servidor..."); return; }
+    // Merge Supabase users with fallback
+    const supaUsers = Array.isArray(users) && users.length > 0 ? users : [];
+    const allUsers = supaUsers.length > 0 ? supaUsers : USUARIOS_INICIAIS;
+    const u = allUsers.find(u => 
+      String(u.matricula).trim() === String(mat).trim() && 
+      String(u.senha) === String(pwd) && 
+      u.ativo !== false
+    );
     if (!u) { setErr("Matrícula ou senha incorreta."); return; }
     onLogin(u);
   }
@@ -265,10 +268,10 @@ function LoginScreen({ onLogin }) {
         <Input label="Matrícula" value={mat} onChange={e=>setMat(e.target.value)} placeholder="Digite sua matrícula" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
         <Input label="Senha" type="password" value={pwd} onChange={e=>setPwd(e.target.value)} placeholder="Digite sua senha" onKeyDown={e=>e.key==="Enter"&&handleLogin()} />
         {err && <div style={{color:"#dc2626",fontSize:12,marginBottom:10}}>{err}</div>}
-        <Btn onClick={handleLogin} style={{width:"100%",padding:"10px",fontSize:14}}>Entrar</Btn>
-        <div style={{marginTop:16,fontSize:11,color:"#9ca3af",textAlign:"center"}}>
-          {loading && <div style={{textAlign:"center",fontSize:12,color:"#6b7280",marginBottom:8}}>⏳ Conectando ao servidor...</div>}
-        </div>
+        {!isReady && <div style={{textAlign:"center",fontSize:12,color:"#6b7280",marginBottom:8}}>⏳ Conectando...</div>}
+        <Btn onClick={handleLogin} style={{width:"100%",padding:"10px",fontSize:14,opacity:!isReady?0.7:1}}>
+          {!isReady ? "Aguardando..." : "Entrar"}
+        </Btn>
       </div>
     </div>
   );
