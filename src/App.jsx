@@ -2922,9 +2922,9 @@ function AbaProcessos({ officers, podeEditar, loggedUser, processos, setProcesso
   const [fPrazo, setFPrazo] = useState("todos");
   const [busca, setBusca] = useState("");
   const [showPrazos, setShowPrazos] = useState(false);
-  const [formPrazos, setFormPrazos] = useState({...prazos});
+  const [formPrazos, setFormPrazos] = useState({...(prazos||PRAZOS_DEFAULT)});
   const [showNumeracao, setShowNumeracao] = useState(false);
-  const [formNum, setFormNum] = useState({...numeracao});
+  const [formNum, setFormNum] = useState({...(numeracao||{PDS:0,PAD:0,IPM:0,Portaria:0,IT:0,Sindicância:0,SubstEncarregado:0,APSumaria:0,BGOsLidos:0})});
 
   function openNew() {
     setForm({tipo:"IPM",status:"Pendente",investigados:[],andamentos:[],preso:false,diasProrroga:0});
@@ -3541,20 +3541,6 @@ function AbaExpedientes({ officers, podeEditar, loggedUser, expedientes, setExpe
   );
 }
 
-// ── RENDER PRINCIPAL ───────────────────────────────────────────────────────
-return (
-  <div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-      <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Corregedoria</h2>
-    </div>
-    {/* Abas superiores */}
-    <div style={{display:"flex",borderBottom:"2px solid #e5e7eb",marginBottom:16,gap:0}}>
-      {[
-        {id:"processos",  label:"⚖️ Processos"},
-        {id:"elogios",    label:"🏅 Elogios"},
-        {id:"milae",      label:"🛡️ MILAE"},
-        {id:"expedientes",label:"📋 Expedientes"},
-
 
 function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, loggedUser }) {
   const podeEditar = perm.admin || perm.corregedoria;
@@ -3575,7 +3561,18 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
 
   const [aba, setAba] = useState("processos");
 
-  // ── ABA PROCESSOS ──────────────────────────────────────────────────────────
+  // ── RENDER PRINCIPAL ───────────────────────────────────────────────────────
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Corregedoria</h2>
+      </div>
+      <div style={{display:"flex",borderBottom:"2px solid #e5e7eb",marginBottom:16,gap:0}}>
+        {[
+          {id:"processos",  label:"⚖️ Processos"},
+          {id:"elogios",    label:"🏅 Elogios"},
+          {id:"milae",      label:"🛡️ MILAE"},
+          {id:"expedientes",label:"📋 Expedientes"},
         ].map(a=>(
           <button key={a.id} onClick={()=>setAba(a.id)}
             style={{padding:"10px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,
