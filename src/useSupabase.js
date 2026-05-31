@@ -99,8 +99,8 @@ async function fetchData(localKey, mapping) {
   if (!supabase) return null
 
   if (mapping.type === 'config') {
-    const { data } = await supabase.from('config').select('value').eq('key', mapping.key).single()
-    return data?.value ?? null
+    const { data } = await supabase.from('config').select('value').eq('key', mapping.key)
+    return data?.[0]?.value ?? null
   }
 
   if (mapping.type === 'list') {

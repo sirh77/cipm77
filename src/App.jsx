@@ -2919,8 +2919,10 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
   const [elogios,    setElogios]    = useSupabaseState("sirh_corr_elogios",    []);
   const [milae,      setMilae]      = useSupabaseState("sirh_corr_milae",      []);
   const [expedientes,setExpedientes]= useSupabaseState("sirh_corr_expedientes",[]);
-  const [prazos,     setPrazos]     = useSupabaseState("sirh_corr_prazos",     PRAZOS_DEFAULT);
-  const [numeracao,  setNumeracao]  = useSupabaseState("sirh_corr_numeracao",  {PDS:0,PAD:0,IPM:0,Portaria:0,IT:0,Sindicância:0,SubstEncarregado:0,APSumaria:0,BGOsLidos:0});
+  const [prazosRaw,     setPrazos]     = useSupabaseState("sirh_corr_prazos",     PRAZOS_DEFAULT);
+  const [numeracaoRaw,  setNumeracao]  = useSupabaseState("sirh_corr_numeracao",  {PDS:0,PAD:0,IPM:0,Portaria:0,IT:0,Sindicância:0,SubstEncarregado:0,APSumaria:0,BGOsLidos:0});
+  const prazos = prazosRaw || PRAZOS_DEFAULT;
+  const numeracao = numeracaoRaw || {PDS:0,PAD:0,IPM:0,Portaria:0,IT:0,Sindicância:0,SubstEncarregado:0,APSumaria:0,BGOsLidos:0};
 
   const [aba, setAba] = useState("processos");
 
