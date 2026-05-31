@@ -50,22 +50,30 @@ export function useSupabaseState(localKey, initialValue) {
     // Realtime: escuta mudanças no banco e atualiza automaticamente
     if (mapping.type === 'config' || mapping.type === 'list') return
 
-    const channel = supabase
-      .channel(`realtime-${localKey}`)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: mapping.table },
-        async () => {
-          // Recarrega os dados quando houver mudança
-          delete memCache[localKey]
-          delete loadingPromises[localKey]
-          const result = await fetchData(localKey, mapping)
-          memCache[localKey] = result
-          if (isMounted.current) setData(result)
-        }
-      )
-      .subscribe()
+    let channel
+    try {
+      channel = supabase
+        .channel(`realtime-${localKey}-${Date.now()}`)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: mapping.table },
+          async () => {
+            delete memCache[localKey]
+            delete loadingPromises[localKey]
+            const result = await fetchData(localKey, mapping)
+            memCache[localKey] = result
+            if (isMounted.current) setData(result)
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR') {
+            console.warn(`[SiRH77] Realtime não disponível para ${mapping.table} — usando polling`)
+          }
+        })
+    } catch(err) {
+      console.warn(`[SiRH77] Realtime erro:`, err)
+    }
 
-    return () => { supabase.removeChannel(channel) }
+    return () => { if (channel) supabase.removeChannel(channel) }
   }, [localKey])
 
   // Setter que sincroniza com Supabase
