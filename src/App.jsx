@@ -2911,14 +2911,663 @@ function classifComportamento(policialId, processos) {
   return "Excepcional";
 }
 
+function AbaProcessos({ officers, podeEditar, loggedUser, processos, setProcessos, prazos, setPrazos, numeracao, setNumeracao }) {
+  const [modal, setModal] = useState(null); // null | "new" | processo
+  const [modalAba, setModalAba] = useState("dados");
+  const [form, setForm] = useState({});
+  const sf = (k,v) => setForm(f=>({...f,[k]:v}));
+  const [fEncarregado, setFEncarregado] = useState("todos");
+  const [fTipo, setFTipo] = useState("todos");
+  const [fStatus, setFStatus] = useState("todos");
+  const [fPrazo, setFPrazo] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [showPrazos, setShowPrazos] = useState(false);
+  const [formPrazos, setFormPrazos] = useState({...prazos});
+  const [showNumeracao, setShowNumeracao] = useState(false);
+  const [formNum, setFormNum] = useState({...numeracao});
+
+  function openNew() {
+    setForm({tipo:"IPM",status:"Pendente",investigados:[],andamentos:[],preso:false,diasProrroga:0});
+    setModalAba("dados"); setModal("new");
+  }
+  function openEdit(p) {
+    setForm({...p}); setModalAba("dados"); setModal(p);
+  }
+
+  function saveProcesso() {
+    const dataLimite = calcDataLimite(form.dataCarga, form.tipo, form.diasProrroga, form.preso, prazos);
+    const now = new Date().toISOString();
+    if (modal==="new") {
+      const novo = {...form, id:Date.now(), dataLimite, criadoEm:now};
+      setProcessos(ps=>[...ps, novo]);
+    } else {
+      setProcessos(ps=>ps.map(p=>p.id===form.id?{...form, dataLimite}:p));
+    }
+    setModal(null);
+  }
+
+  function addAndamento(texto) {
+    if (!texto.trim()) return;
+    const novo = {texto, dataHora: new Date().toLocaleString("pt-BR"), autor: loggedUser?.nome||"Sistema"};
+    sf("andamentos", [...(form.andamentos||[]), novo]);
+  }
+
+  function addInvestigado(obj) {
+    sf("investigados", [...(form.investigados||[]), obj]);
+  }
+
+  const getOfficer = id => officers.find(o=>o.id===Number(id));
+  const hoje = new Date().toISOString().slice(0,10);
+
+  const naoArquivados = processos.filter(p=>p.status!=="Arquivado");
+  const filtrados = processos.filter(p=>{
+    if (fStatus==="todos" && p.status==="Arquivado") return false;
+    if (fStatus!=="todos" && p.status!==fStatus) return false;
+    if (fTipo!=="todos" && p.tipo!==fTipo) return false;
+    if (fEncarregado!=="todos" && (p.encarregadoId!==fEncarregado && p.encarregadoNome!==fEncarregado)) return false;
+    if (fPrazo!=="todos") {
+      const sp = calcStatusPrazo(p.status, p.dataLimite);
+      if (fPrazo==="atrasado" && !sp.label.includes("Atrasado")) return false;
+      if (fPrazo==="em_dia" && !sp.label.includes("Em dia")) return false;
+    }
+    if (busca.trim()) {
+      const q = busca.toLowerCase();
+      const inv = (p.investigados||[]).map(i=>i.nome||"").join(" ").toLowerCase();
+      if (!(p.numProcesso||"").toLowerCase().includes(q) &&
+          !(p.encarregadoNome||"").toLowerCase().includes(q) &&
+          !inv.includes(q) && !(p.sei||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b)=>(a.dataInstauracao||"").localeCompare(b.dataInstauracao||""));
+
+  // Dashboard cards
+  const tiposCard = ["IPM","PAD","PDS","IT","AP. SUMÁRIA","SIND"];
+  const dashCards = tiposCard.map(tipo=>{
+    const ativos = naoArquivados.filter(p=>p.tipo===tipo);
+    const atrasados = ativos.filter(p=>calcStatusPrazo(p.status,p.dataLimite).label.includes("Atrasado"));
+    return {tipo, total:ativos.length, emDia:ativos.length-atrasados.length, atrasados:atrasados.length};
+  });
+
+  const encarregados = [...new Set(processos.map(p=>p.encarregadoNome).filter(Boolean))];
+
+  return (
+    <div>
+      {/* Modal configurar prazos */}
+      {showPrazos && (
+        <Modal title="⚙️ Configurar Prazos Legais" onClose={()=>setShowPrazos(false)} wide>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{background:"#1e3a5f",color:"#fff"}}>
+                <th style={{padding:"8px 10px",textAlign:"left"}}>Tipo</th>
+                <th style={{padding:"8px 10px",textAlign:"center"}}>Prazo base (dias)</th>
+                <th style={{padding:"8px 10px",textAlign:"center"}}>Prorrogação (dias)</th>
+                <th style={{padding:"8px 10px",textAlign:"center"}}>Se preso (dias)</th>
+                <th style={{padding:"8px 10px",textAlign:"center"}}>Prorrogação preso</th>
+              </tr></thead>
+              <tbody>
+                {Object.entries(formPrazos).map(([tipo,cfg],i)=>(
+                  <tr key={tipo} style={{background:i%2===0?"#fff":"#f9fafb"}}>
+                    <td style={{padding:"8px 10px",fontWeight:600}}>{tipo}</td>
+                    {["base","prorroga","preso","prorrogaPreso"].map(k=>(
+                      <td key={k} style={{padding:"6px 8px",textAlign:"center"}}>
+                        <input type="number" value={cfg[k]||0}
+                          onChange={e=>setFormPrazos(fp=>({...fp,[tipo]:{...fp[tipo],[k]:Number(e.target.value)}}))}
+                          style={{width:70,padding:"4px 6px",border:"1px solid #d1d5db",borderRadius:5,fontSize:12,textAlign:"center",outline:"none"}}/>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setShowPrazos(false)}>Cancelar</Btn>
+            <Btn onClick={()=>{setPrazos(formPrazos);setShowPrazos(false);}}>Salvar prazos</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal numeração */}
+      {showNumeracao && (
+        <Modal title="Controle de Numeração" onClose={()=>setShowNumeracao(false)}>
+          {Object.entries(formNum).map(([k,v])=>(
+            <div key={k} style={{display:"flex",alignItems:"center",gap:12,marginBottom:8,padding:"8px 10px",background:"#f9fafb",borderRadius:7}}>
+              <span style={{flex:1,fontSize:13,fontWeight:500}}>{k.replace(/([A-Z])/g," $1").trim()}</span>
+              <span style={{fontSize:12,color:"#6b7280"}}>Último nº:</span>
+              <input type="number" value={v}
+                onChange={e=>setFormNum(fn=>({...fn,[k]:Number(e.target.value)}))}
+                style={{width:90,padding:"5px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:13,textAlign:"center",outline:"none"}}/>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>setShowNumeracao(false)}>Cancelar</Btn>
+            <Btn onClick={()=>{setNumeracao(formNum);setShowNumeracao(false);}}>Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal processo */}
+      {modal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:2000,overflowY:"auto",padding:"16px 12px"}}>
+          <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:780,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15}}>{modal==="new"?"Novo Processo":"Editar Processo"}</span>
+              <button onClick={()=>setModal(null)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕</button>
+            </div>
+            {/* Abas internas */}
+            <div style={{display:"flex",borderBottom:"1px solid #e5e7eb",background:"#f9fafb"}}>
+              {["dados","andamentos","investigados"].map(a=>(
+                <button key={a} onClick={()=>setModalAba(a)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:12,fontWeight:modalAba===a?700:400,color:modalAba===a?"#1e3a5f":"#6b7280",borderBottom:modalAba===a?"2px solid #1e3a5f":"none"}}>
+                  {a==="dados"?"📋 Dados":a==="andamentos"?"📝 Andamentos":"👤 Investigados"}
+                </button>
+              ))}
+            </div>
+            <div style={{padding:20,maxHeight:"70vh",overflowY:"auto"}}>
+
+              {/* ABA DADOS */}
+              {modalAba==="dados" && (
+                <div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:4}}>
+                    <Input label="Data de Instauração" type="date" value={form.dataInstauracao||""} onChange={e=>sf("dataInstauracao",e.target.value)}/>
+                    <Input label="Data de Carga" type="date" value={form.dataCarga||""} onChange={e=>{sf("dataCarga",e.target.value);}}/>
+                    <Input label="Data de Distribuição" type="date" value={form.dataDistribuicao||""} onChange={e=>sf("dataDistribuicao",e.target.value)}/>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <Select label="Tipo de Processo" value={form.tipo||"IPM"} onChange={e=>sf("tipo",e.target.value)}>
+                      {TIPOS_PROCESSO.map(t=><option key={t} value={t}>{t}</option>)}
+                    </Select>
+                    <Input label="Número do Processo" value={form.numProcesso||""} onChange={e=>sf("numProcesso",e.target.value)}/>
+                  </div>
+                  {/* Encarregado */}
+                  <div style={{marginBottom:12}}>
+                    <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Encarregado</label>
+                    {form.encarregadoId ? (
+                      <div style={{display:"flex",alignItems:"center",gap:8,background:"#f0f4ff",borderRadius:7,padding:"7px 10px"}}>
+                        <Avatar name={getOfficer(form.encarregadoId)?.nome||form.encarregadoNome||""} size={28}/>
+                        <span style={{fontSize:13,flex:1}}>{form.encarregadoNome}</span>
+                        <button onClick={()=>{sf("encarregadoId",null);sf("encarregadoNome","");}} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
+                      </div>
+                    ) : (
+                      <div>
+                        <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{sf("encarregadoId",o.id);sf("encarregadoNome",o.nome);}}/>
+                        <div style={{display:"flex",gap:8,marginTop:4}}>
+                          <input value={form.encarregadoManual||""} onChange={e=>sf("encarregadoManual",e.target.value)} placeholder="Ou digitar manualmente..." style={{flex:1,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
+                          <Btn small onClick={()=>{if(form.encarregadoManual){sf("encarregadoNome",form.encarregadoManual);sf("encarregadoManual","");}}}>Usar</Btn>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <Textarea label="Fato/Resumo" value={form.fato||""} onChange={e=>sf("fato",e.target.value)} rows={2}/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                      <input type="checkbox" id="preso_chk" checked={!!form.preso} onChange={e=>sf("preso",e.target.checked)}/>
+                      <label htmlFor="preso_chk" style={{fontSize:13,cursor:"pointer",fontWeight:500}}>Preso</label>
+                    </div>
+                    <Input label="Dias de Prorrogação" type="number" value={form.diasProrroga||0} onChange={e=>sf("diasProrroga",Number(e.target.value))}/>
+                    <Select label="Status" value={form.status||"Pendente"} onChange={e=>sf("status",e.target.value)}>
+                      {STATUS_PROCESSO.map(s=><option key={s} value={s}>{s}</option>)}
+                    </Select>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:4}}>
+                    <Select label="Solução" value={form.solucao||""} onChange={e=>sf("solucao",e.target.value)}>
+                      <option value="">Sem solução</option>
+                      {Object.keys(PONTOS_PUNICAO).map(s=><option key={s} value={s}>{s} ({PONTOS_PUNICAO[s]} ponto{PONTOS_PUNICAO[s]>1?"s":""})</option>)}
+                      <option value="Absolvição">Absolvição</option>
+                      <option value="Remissão">Remissão</option>
+                      <option value="Arquivamento">Arquivamento</option>
+                    </Select>
+                    <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
+                  </div>
+                  <Textarea label="Observações" value={form.observacoes||""} onChange={e=>sf("observacoes",e.target.value)} rows={2}/>
+                  {/* Campos calculados */}
+                  {form.dataCarga && (
+                    <div style={{background:"#f0f4ff",borderRadius:8,padding:"10px 12px",marginTop:8,fontSize:12}}>
+                      <div>Data Limite: <strong>{fmtDate(calcDataLimite(form.dataCarga,form.tipo,form.diasProrroga,form.preso,prazos))}</strong></div>
+                      {(()=>{const sp=calcStatusPrazo(form.status,calcDataLimite(form.dataCarga,form.tipo,form.diasProrroga,form.preso,prazos));return <div>Status do prazo: <strong style={{color:sp.cor}}>{sp.label}</strong></div>;})()} 
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ABA ANDAMENTOS */}
+              {modalAba==="andamentos" && (
+                <div>
+                  <div style={{marginBottom:12}}>
+                    <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Próximo passo</label>
+                    <div style={{display:"flex",gap:8}}>
+                      <input id="prox_passo_inp" placeholder="Descreva o próximo passo..." style={{flex:1,padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none"}}/>
+                      <Btn onClick={()=>{const inp=document.getElementById("prox_passo_inp");if(inp.value.trim()){addAndamento(inp.value.trim());inp.value="";}else alert("Digite o andamento.")}}>Registrar</Btn>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"40vh",overflowY:"auto"}}>
+                    {[...(form.andamentos||[])].reverse().map((a,i)=>(
+                      <div key={i} style={{background:"#f9fafb",borderRadius:7,padding:"8px 12px",borderLeft:"3px solid #1e3a5f"}}>
+                        <div style={{fontSize:11,color:"#6b7280",marginBottom:2}}>{a.dataHora} — {a.autor}</div>
+                        <div style={{fontSize:13}}>{a.texto}</div>
+                      </div>
+                    ))}
+                    {!(form.andamentos||[]).length && <p style={{color:"#9ca3af",fontSize:13}}>Nenhum andamento registrado.</p>}
+                  </div>
+                </div>
+              )}
+
+              {/* ABA INVESTIGADOS */}
+              {modalAba==="investigados" && (
+                <div>
+                  <div style={{marginBottom:12}}>
+                    <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Adicionar investigado</label>
+                    <BuscaPolicial officers={officers} excluirIds={(form.investigados||[]).map(i=>i.policialId).filter(Boolean)}
+                      onSelect={o=>addInvestigado({policialId:o.id,nome:o.nome,matricula:o.matricula})}/>
+                    <div style={{display:"flex",gap:8,marginTop:6}}>
+                      <input id="inv_nome" placeholder="Nome (manual)" style={{flex:2,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
+                      <input id="inv_mat" placeholder="Matrícula" style={{flex:1,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
+                      <Btn small onClick={()=>{const n=document.getElementById("inv_nome").value.trim(),m=document.getElementById("inv_mat").value.trim();if(n){addInvestigado({nome:n,matricula:m});document.getElementById("inv_nome").value="";document.getElementById("inv_mat").value="";}}}>+ Add</Btn>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {(form.investigados||[]).map((inv,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"#f9fafb",borderRadius:7}}>
+                        <Avatar name={inv.nome} size={28}/>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,fontWeight:500}}>{inv.nome}</div>
+                          <div style={{fontSize:11,color:"#6b7280"}}>{inv.matricula?`Mat. ${cleanMat(inv.matricula)}`:""}</div>
+                        </div>
+                        <button onClick={()=>sf("investigados",(form.investigados||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:15}}>✕</button>
+                      </div>
+                    ))}
+                    {!(form.investigados||[]).length && <p style={{color:"#9ca3af",fontSize:13}}>Nenhum investigado adicionado.</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{padding:"12px 20px",borderTop:"1px solid #e5e7eb",display:"flex",gap:8,justifyContent:"flex-end",background:"#f9fafb"}}>
+              <Btn variant="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+              {podeEditar && <Btn onClick={saveProcesso}>💾 Salvar processo</Btn>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Linha 1: Dashboard cards */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginBottom:12}}>
+        {dashCards.map(dc=>(
+          <div key={dc.tipo} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:9,padding:"10px 12px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#1e3a5f",marginBottom:4}}>{dc.tipo}</div>
+            <div style={{fontSize:20,fontWeight:700,color:"#111827"}}>{dc.total}</div>
+            <div style={{fontSize:10,color:"#15803d"}}>✅ Em dia: {dc.emDia}</div>
+            {dc.atrasados>0 && <div style={{fontSize:10,color:"#dc2626"}}>⚠️ Atrasados: {dc.atrasados}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Linha 2: Controle de numeração */}
+      {podeEditar && (
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          {Object.entries(numeracao).map(([k,v])=>(
+            <div key={k} style={{background:"#f0f4ff",border:"1px solid #bfdbfe",borderRadius:8,padding:"6px 12px",fontSize:11,cursor:"pointer"}} onClick={()=>{setFormNum({...numeracao});setShowNumeracao(true);}}>
+              <div style={{color:"#6b7280",marginBottom:2}}>{k.replace(/([A-Z])/g," $1").trim()}</div>
+              <div style={{fontWeight:700,fontSize:14,color:"#1e3a5f"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Linha 3: Filtros + ações */}
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+        <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="🔍 Processo, investigado, encarregado, SEI..."
+          style={{flex:1,minWidth:200,padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none"}}/>
+        <select value={fTipo} onChange={e=>setFTipo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos tipos</option>
+          {TIPOS_PROCESSO.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos status</option>
+          {STATUS_PROCESSO.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={fEncarregado} onChange={e=>setFEncarregado(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos encarregados</option>
+          {encarregados.map(e=><option key={e} value={e}>{e}</option>)}
+        </select>
+        <select value={fPrazo} onChange={e=>setFPrazo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos prazos</option>
+          <option value="em_dia">Em dia</option>
+          <option value="atrasado">Atrasado</option>
+        </select>
+        {podeEditar && <Btn onClick={()=>{setFormPrazos({...prazos});setShowPrazos(true);}} variant="secondary" small>⚙️ Prazos</Btn>}
+        {podeEditar && <Btn onClick={openNew}>+ Novo processo</Btn>}
+      </div>
+
+      {/* Listagem */}
+      {filtrados.length===0 && <div style={{textAlign:"center",padding:24,color:"#9ca3af",background:"#fff",borderRadius:10,border:"1px solid #e5e7eb",fontSize:13}}>Nenhum processo encontrado.</div>}
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead>
+            <tr style={{background:"#1e3a5f",color:"#fff"}}>
+              {["Instauração","Nº Portaria","Tipo","Encarregado","SEI","Investigados","Status","Prazo"].map(h=>(
+                <th key={h} style={{padding:"8px 10px",textAlign:"left",whiteSpace:"nowrap"}}>{h}</th>
+              ))}
+              <th style={{padding:"8px 10px"}}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtrados.map((p,i)=>{
+              const sp = calcStatusPrazo(p.status, p.dataLimite);
+              const atrasado = sp.label.includes("Atrasado");
+              const rowBg = atrasado ? "#fff5f5" : i%2===0?"#fff":"#f9fafb";
+              return (
+                <tr key={p.id} style={{background:rowBg,borderBottom:"1px solid #f0f0f0",cursor:"pointer"}} onClick={()=>openEdit(p)}>
+                  <td style={{padding:"7px 10px",whiteSpace:"nowrap"}}>{fmtDate(p.dataInstauracao)}</td>
+                  <td style={{padding:"7px 10px"}}>{p.numProcesso||"—"}</td>
+                  <td style={{padding:"7px 10px"}}><Badge color="#dbeafe" textColor="#1d4ed8">{p.tipo}</Badge></td>
+                  <td style={{padding:"7px 10px"}}>{p.encarregadoNome||"—"}</td>
+                  <td style={{padding:"7px 10px",color:"#6b7280"}}>{p.sei||"—"}</td>
+                  <td style={{padding:"7px 10px"}}>
+                    {(p.investigados||[]).slice(0,2).map(inv=>inv.nome).join(", ")}
+                    {(p.investigados||[]).length>2&&` +${(p.investigados||[]).length-2}`}
+                  </td>
+                  <td style={{padding:"7px 10px"}}><Badge color={p.status==="Finalizado"?"#dcfce7":p.status==="Arquivado"?"#f3f4f6":"#fef3c7"} textColor={p.status==="Finalizado"?"#15803d":p.status==="Arquivado"?"#374151":"#92400e"}>{p.status}</Badge></td>
+                  <td style={{padding:"7px 10px",fontWeight:atrasado?700:400,color:sp.cor,whiteSpace:"nowrap"}}>{sp.label}</td>
+                  <td style={{padding:"7px 10px"}} onClick={e=>e.stopPropagation()}>
+                    {podeEditar && <Btn small variant="danger" onClick={()=>setProcessos(ps=>ps.filter(x=>x.id!==p.id))}>🗑</Btn>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── ABA ELOGIOS ────────────────────────────────────────────────────────────
+
+
+function AbaElogios({ officers, podeEditar, loggedUser, elogios, setElogios }) {
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const sf = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  function save() {
+    if (!form.data) { alert("Data obrigatória."); return; }
+    const novo = {...form, id:Date.now()};
+    if (form.id) setElogios(es=>es.map(e=>e.id===form.id?novo:e));
+    else setElogios(es=>[...es,novo]);
+    setModal(false);
+  }
+
+  return (
+    <div>
+      {modal && (
+        <Modal title={form.id?"Editar Elogio":"Novo Elogio"} onClose={()=>setModal(false)} wide>
+          <Input label="Data do Despacho" type="date" value={form.data||""} onChange={e=>sf("data",e.target.value)}/>
+          <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
+          <div style={{marginBottom:12}}>
+            <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Policiais contemplados</label>
+            <BuscaPolicial officers={officers} excluirIds={(form.policiais||[]).map(p=>p.policialId).filter(Boolean)}
+              onSelect={o=>sf("policiais",[...(form.policiais||[]),{policialId:o.id,nome:o.nome,matricula:o.matricula}])}/>
+            <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+              {(form.policiais||[]).map((p,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#f0f4ff",borderRadius:6}}>
+                  <span style={{flex:1,fontSize:12}}>{p.nome}</span>
+                  <button onClick={()=>sf("policiais",(form.policiais||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Textarea label="Nota/Descrição" value={form.nota||""} onChange={e=>sf("nota",e.target.value)} rows={3}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <input type="checkbox" id="pub_boletim" checked={!!form.publicadoBoletim} onChange={e=>sf("publicadoBoletim",e.target.checked)}/>
+            <label htmlFor="pub_boletim" style={{fontSize:12,cursor:"pointer"}}>Publicado em Boletim</label>
+          </div>
+          <Textarea label="Observações" value={form.observacoes||""} onChange={e=>sf("observacoes",e.target.value)} rows={2}/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+            <Btn onClick={save}>Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>Elogios</h3><span style={{fontSize:12,color:"#6b7280"}}>{elogios.length} registro(s)</span></div>
+        {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo elogio</Btn>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {[...elogios].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(e=>(
+          <Card key={e.id} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{fmtDate(e.data)} {e.sei&&<span style={{color:"#6b7280",fontWeight:400}}>— SEI {e.sei}</span>}</div>
+              <div style={{fontSize:12,color:"#374151",marginBottom:4}}>{e.nota}</div>
+              <div style={{fontSize:11,color:"#6b7280"}}>{(e.policiais||[]).map(p=>p.nome).join(", ")}</div>
+            </div>
+            {e.publicadoBoletim && <Badge color="#dcfce7" textColor="#15803d" size={10}>Publicado no BGO</Badge>}
+            {podeEditar && (
+              <div style={{display:"flex",gap:4}}>
+                <Btn small variant="secondary" onClick={()=>{setForm(e);setModal(true);}}>✏️</Btn>
+                <Btn small variant="danger" onClick={()=>setElogios(es=>es.filter(x=>x.id!==e.id))}>🗑</Btn>
+              </div>
+            )}
+          </Card>
+        ))}
+        {!elogios.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum elogio registrado.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── ABA MILAE ──────────────────────────────────────────────────────────────
+
+
+function AbaMilae({ officers, podeEditar, loggedUser, milae, setMilae }) {
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const sf = (k,v) => setForm(f=>({...f,[k]:v}));
+  function save() {
+    const novo = {...form, id:Date.now()};
+    if (form.id) setMilae(ms=>ms.map(m=>m.id===form.id?novo:m));
+    else setMilae(ms=>[...ms,novo]);
+    setModal(false);
+  }
+  return (
+    <div>
+      {modal && (
+        <Modal title="Registro MILAE" onClose={()=>setModal(false)} wide>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Input label="Data do Fato" type="date" value={form.dataFato||""} onChange={e=>sf("dataFato",e.target.value)}/>
+            <Input label="Número" value={form.numero||""} onChange={e=>sf("numero",e.target.value)}/>
+          </div>
+          <Input label="Local" value={form.local||""} onChange={e=>sf("local",e.target.value)}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Input label="Resistente" value={form.resistente||""} onChange={e=>sf("resistente",e.target.value)}/>
+            <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
+          </div>
+          <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+              <input type="checkbox" checked={!!form.preso} onChange={e=>sf("preso",e.target.checked)}/> Preso
+            </label>
+            <Input label="Dias Prorrogação" type="number" value={form.diasProrroga||0} onChange={e=>sf("diasProrroga",e.target.value)}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Policiais envolvidos</label>
+            <BuscaPolicial officers={officers} excluirIds={(form.policiais||[]).map(p=>p.policialId).filter(Boolean)}
+              onSelect={o=>sf("policiais",[...(form.policiais||[]),{policialId:o.id,nome:o.nome,matricula:o.matricula}])}/>
+            <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+              {(form.policiais||[]).map((p,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#f0f4ff",borderRadius:6}}>
+                  <span style={{flex:1,fontSize:12}}>{p.nome}</span>
+                  <button onClick={()=>sf("policiais",(form.policiais||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Textarea label="Medidas Adotadas" value={form.medidas||""} onChange={e=>sf("medidas",e.target.value)} rows={3}/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+            <Btn onClick={save}>Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>MILAE</h3><span style={{fontSize:12,color:"#6b7280"}}>{milae.length} registro(s)</span></div>
+        {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo MILAE</Btn>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {[...milae].sort((a,b)=>(b.dataFato||"").localeCompare(a.dataFato||"")).map(m=>(
+          <Card key={m.id} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13}}>{fmtDate(m.dataFato)} — Nº {m.numero||"—"}</div>
+              <div style={{fontSize:12,color:"#6b7280"}}>{m.local}</div>
+              <div style={{fontSize:12,color:"#374151",marginTop:4}}>{(m.policiais||[]).map(p=>p.nome).join(", ")}</div>
+              {m.medidas && <div style={{fontSize:11,color:"#374151",marginTop:4}}>{m.medidas}</div>}
+            </div>
+            {podeEditar && (
+              <div style={{display:"flex",gap:4}}>
+                <Btn small variant="secondary" onClick={()=>{setForm(m);setModal(true);}}>✏️</Btn>
+                <Btn small variant="danger" onClick={()=>setMilae(ms=>ms.filter(x=>x.id!==m.id))}>🗑</Btn>
+              </div>
+            )}
+          </Card>
+        ))}
+        {!milae.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum registro MILAE.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── ABA EXPEDIENTES ────────────────────────────────────────────────────────
+
+
+function AbaExpedientes({ officers, podeEditar, loggedUser, expedientes, setExpedientes }) {
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const [verConcluidos, setVerConcluidos] = useState(false);
+  const [confirmConcluir, setConfirmConcluir] = useState(null);
+  const [proxAto, setProxAto] = useState({ato:"",dataLimite:""});
+  const sf = (k,v) => setForm(f=>({...f,[k]:v}));
+  const hoje = new Date().toISOString().slice(0,10);
+
+  function save() {
+    const novo = {...form, id:form.id||Date.now(), concluido:false};
+    if (form.id) setExpedientes(es=>es.map(e=>e.id===form.id?novo:e));
+    else setExpedientes(es=>[...es,novo]);
+    setModal(false);
+  }
+
+  function tentarConcluir(exp) {
+    setConfirmConcluir(exp);
+    setProxAto({ato:"",dataLimite:""});
+  }
+
+  function confirmarConcluir(temProximo) {
+    const exp = confirmConcluir;
+    if (temProximo) {
+      if (!proxAto.ato || !proxAto.dataLimite) { alert("Preencha o próximo ato e data."); return; }
+      setExpedientes(es=>es.map(e=>e.id===exp.id?{...e,ato:proxAto.ato,dataLimite:proxAto.dataLimite,concluido:false}:e));
+    } else {
+      setExpedientes(es=>es.map(e=>e.id===exp.id?{...e,concluido:true}:e));
+    }
+    setConfirmConcluir(null);
+  }
+
+  const filtrados = expedientes.filter(e=>verConcluidos?e.concluido:!e.concluido)
+    .sort((a,b)=>(a.dataLimite||"").localeCompare(b.dataLimite||""));
+
+  return (
+    <div>
+      {confirmConcluir && (
+        <Modal title="Concluir Expediente" onClose={()=>setConfirmConcluir(null)}>
+          <p style={{fontSize:13,marginBottom:12}}>Há um próximo ato para este expediente?</p>
+          <Textarea label="Próximo ato (opcional)" value={proxAto.ato} onChange={e=>setProxAto(x=>({...x,ato:e.target.value}))} rows={2}/>
+          {proxAto.ato && <Input label="Nova data limite" type="date" value={proxAto.dataLimite} onChange={e=>setProxAto(x=>({...x,dataLimite:e.target.value}))}/>}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>confirmarConcluir(false)}>Não — marcar concluído</Btn>
+            <Btn onClick={()=>confirmarConcluir(true)}>Sim — atualizar ato</Btn>
+          </div>
+        </Modal>
+      )}
+      {modal && (
+        <Modal title={form.id?"Editar Expediente":"Novo Expediente"} onClose={()=>setModal(false)}>
+          <Input label="Título" value={form.titulo||""} onChange={e=>sf("titulo",e.target.value)}/>
+          <Input label="Nº Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
+          <Textarea label="Ato (o que precisa ser feito)" value={form.ato||""} onChange={e=>sf("ato",e.target.value)} rows={2}/>
+          <Input label="Data Limite" type="date" value={form.dataLimite||""} onChange={e=>sf("dataLimite",e.target.value)}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <input type="checkbox" id="recorrente_chk" checked={!!form.recorrente} onChange={e=>sf("recorrente",e.target.checked)}/>
+            <label htmlFor="recorrente_chk" style={{fontSize:12,cursor:"pointer"}}>Recorrência mensal</label>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+            <Btn onClick={save}>Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>Expedientes</h3><span style={{fontSize:12,color:"#6b7280"}}>{filtrados.length} registro(s)</span></div>
+        <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
+            <button onClick={()=>setVerConcluidos(false)} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:!verConcluidos?600:400,background:!verConcluidos?"#1e3a5f":"transparent",color:!verConcluidos?"#fff":"#374151"}}>Pendentes</button>
+            <button onClick={()=>setVerConcluidos(true)} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:verConcluidos?600:400,background:verConcluidos?"#374151":"transparent",color:verConcluidos?"#fff":"#374151"}}>Concluídos</button>
+          </div>
+          {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo expediente</Btn>}
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {filtrados.map(e=>{
+          const atrasado = !e.concluido && e.dataLimite && e.dataLimite < hoje;
+          return (
+            <Card key={e.id} style={{borderLeft:`3px solid ${atrasado?"#dc2626":e.recorrente?"#7c3aed":"#1e3a5f"}`,background:atrasado?"#fff5f5":"#fff"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:13,color:atrasado?"#dc2626":"#111827"}}>{e.titulo}</div>
+                  {e.sei && <div style={{fontSize:11,color:"#6b7280"}}>SEI: {e.sei}</div>}
+                  <div style={{fontSize:12,color:"#374151",marginTop:4}}>{e.ato}</div>
+                  <div style={{fontSize:11,color:atrasado?"#dc2626":"#6b7280",marginTop:2}}>
+                    Prazo: {fmtDate(e.dataLimite)} {atrasado&&"— ATRASADO"} {e.recorrente&&"🔄"}
+                  </div>
+                </div>
+                {podeEditar && !e.concluido && (
+                  <div style={{display:"flex",gap:4,marginLeft:8}}>
+                    <Btn small variant="success" onClick={()=>tentarConcluir(e)}>✓ Concluído</Btn>
+                    <Btn small variant="secondary" onClick={()=>{setForm(e);setModal(true);}}>✏️</Btn>
+                    <Btn small variant="danger" onClick={()=>setExpedientes(es=>es.filter(x=>x.id!==e.id))}>🗑</Btn>
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+        {!filtrados.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum expediente {verConcluidos?"concluído":"pendente"}.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── RENDER PRINCIPAL ───────────────────────────────────────────────────────
+return (
+  <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Corregedoria</h2>
+    </div>
+    {/* Abas superiores */}
+    <div style={{display:"flex",borderBottom:"2px solid #e5e7eb",marginBottom:16,gap:0}}>
+      {[
+        {id:"processos",  label:"⚖️ Processos"},
+        {id:"elogios",    label:"🏅 Elogios"},
+        {id:"milae",      label:"🛡️ MILAE"},
+        {id:"expedientes",label:"📋 Expedientes"},
+
+
 function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, loggedUser }) {
   const podeEditar = perm.admin || perm.corregedoria;
 
   // Sub-state: processos, elogios, milae, expedientes
-  const [processos,  setProcessos]  = useSupabaseState("sirh_corr_processos",  []);
-  const [elogios,    setElogios]    = useSupabaseState("sirh_corr_elogios",    []);
-  const [milae,      setMilae]      = useSupabaseState("sirh_corr_milae",      []);
-  const [expedientes,setExpedientes]= useSupabaseState("sirh_corr_expedientes",[]);
+  const [processosRaw,  setProcessos]  = useSupabaseState("sirh_corr_processos",  []);
+  const [elogiosRaw,    setElogios]    = useSupabaseState("sirh_corr_elogios",    []);
+  const [milaeRaw,      setMilae]      = useSupabaseState("sirh_corr_milae",      []);
+  const [expedientesRaw,setExpedientes]= useSupabaseState("sirh_corr_expedientes",[]);
+  const processos   = processosRaw   || [];
+  const elogios     = elogiosRaw     || [];
+  const milae       = milaeRaw       || [];
+  const expedientes = expedientesRaw || [];
   const [prazosRaw,     setPrazos]     = useSupabaseState("sirh_corr_prazos",     PRAZOS_DEFAULT);
   const [numeracaoRaw,  setNumeracao]  = useSupabaseState("sirh_corr_numeracao",  {PDS:0,PAD:0,IPM:0,Portaria:0,IT:0,Sindicância:0,SubstEncarregado:0,APSumaria:0,BGOsLidos:0});
   const prazos = prazosRaw || PRAZOS_DEFAULT;
@@ -2927,643 +3576,6 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
   const [aba, setAba] = useState("processos");
 
   // ── ABA PROCESSOS ──────────────────────────────────────────────────────────
-  function AbaProcessos() {
-    const [modal, setModal] = useState(null); // null | "new" | processo
-    const [modalAba, setModalAba] = useState("dados");
-    const [form, setForm] = useState({});
-    const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-    const [fEncarregado, setFEncarregado] = useState("todos");
-    const [fTipo, setFTipo] = useState("todos");
-    const [fStatus, setFStatus] = useState("todos");
-    const [fPrazo, setFPrazo] = useState("todos");
-    const [busca, setBusca] = useState("");
-    const [showPrazos, setShowPrazos] = useState(false);
-    const [formPrazos, setFormPrazos] = useState({...prazos});
-    const [showNumeracao, setShowNumeracao] = useState(false);
-    const [formNum, setFormNum] = useState({...numeracao});
-
-    function openNew() {
-      setForm({tipo:"IPM",status:"Pendente",investigados:[],andamentos:[],preso:false,diasProrroga:0});
-      setModalAba("dados"); setModal("new");
-    }
-    function openEdit(p) {
-      setForm({...p}); setModalAba("dados"); setModal(p);
-    }
-
-    function saveProcesso() {
-      const dataLimite = calcDataLimite(form.dataCarga, form.tipo, form.diasProrroga, form.preso, prazos);
-      const now = new Date().toISOString();
-      if (modal==="new") {
-        const novo = {...form, id:Date.now(), dataLimite, criadoEm:now};
-        setProcessos(ps=>[...ps, novo]);
-      } else {
-        setProcessos(ps=>ps.map(p=>p.id===form.id?{...form, dataLimite}:p));
-      }
-      setModal(null);
-    }
-
-    function addAndamento(texto) {
-      if (!texto.trim()) return;
-      const novo = {texto, dataHora: new Date().toLocaleString("pt-BR"), autor: loggedUser?.nome||"Sistema"};
-      sf("andamentos", [...(form.andamentos||[]), novo]);
-    }
-
-    function addInvestigado(obj) {
-      sf("investigados", [...(form.investigados||[]), obj]);
-    }
-
-    const getOfficer = id => officers.find(o=>o.id===Number(id));
-    const hoje = new Date().toISOString().slice(0,10);
-
-    const naoArquivados = processos.filter(p=>p.status!=="Arquivado");
-    const filtrados = processos.filter(p=>{
-      if (fStatus==="todos" && p.status==="Arquivado") return false;
-      if (fStatus!=="todos" && p.status!==fStatus) return false;
-      if (fTipo!=="todos" && p.tipo!==fTipo) return false;
-      if (fEncarregado!=="todos" && (p.encarregadoId!==fEncarregado && p.encarregadoNome!==fEncarregado)) return false;
-      if (fPrazo!=="todos") {
-        const sp = calcStatusPrazo(p.status, p.dataLimite);
-        if (fPrazo==="atrasado" && !sp.label.includes("Atrasado")) return false;
-        if (fPrazo==="em_dia" && !sp.label.includes("Em dia")) return false;
-      }
-      if (busca.trim()) {
-        const q = busca.toLowerCase();
-        const inv = (p.investigados||[]).map(i=>i.nome||"").join(" ").toLowerCase();
-        if (!(p.numProcesso||"").toLowerCase().includes(q) &&
-            !(p.encarregadoNome||"").toLowerCase().includes(q) &&
-            !inv.includes(q) && !(p.sei||"").toLowerCase().includes(q)) return false;
-      }
-      return true;
-    }).sort((a,b)=>(a.dataInstauracao||"").localeCompare(b.dataInstauracao||""));
-
-    // Dashboard cards
-    const tiposCard = ["IPM","PAD","PDS","IT","AP. SUMÁRIA","SIND"];
-    const dashCards = tiposCard.map(tipo=>{
-      const ativos = naoArquivados.filter(p=>p.tipo===tipo);
-      const atrasados = ativos.filter(p=>calcStatusPrazo(p.status,p.dataLimite).label.includes("Atrasado"));
-      return {tipo, total:ativos.length, emDia:ativos.length-atrasados.length, atrasados:atrasados.length};
-    });
-
-    const encarregados = [...new Set(processos.map(p=>p.encarregadoNome).filter(Boolean))];
-
-    return (
-      <div>
-        {/* Modal configurar prazos */}
-        {showPrazos && (
-          <Modal title="⚙️ Configurar Prazos Legais" onClose={()=>setShowPrazos(false)} wide>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead><tr style={{background:"#1e3a5f",color:"#fff"}}>
-                  <th style={{padding:"8px 10px",textAlign:"left"}}>Tipo</th>
-                  <th style={{padding:"8px 10px",textAlign:"center"}}>Prazo base (dias)</th>
-                  <th style={{padding:"8px 10px",textAlign:"center"}}>Prorrogação (dias)</th>
-                  <th style={{padding:"8px 10px",textAlign:"center"}}>Se preso (dias)</th>
-                  <th style={{padding:"8px 10px",textAlign:"center"}}>Prorrogação preso</th>
-                </tr></thead>
-                <tbody>
-                  {Object.entries(formPrazos).map(([tipo,cfg],i)=>(
-                    <tr key={tipo} style={{background:i%2===0?"#fff":"#f9fafb"}}>
-                      <td style={{padding:"8px 10px",fontWeight:600}}>{tipo}</td>
-                      {["base","prorroga","preso","prorrogaPreso"].map(k=>(
-                        <td key={k} style={{padding:"6px 8px",textAlign:"center"}}>
-                          <input type="number" value={cfg[k]||0}
-                            onChange={e=>setFormPrazos(fp=>({...fp,[tipo]:{...fp[tipo],[k]:Number(e.target.value)}}))}
-                            style={{width:70,padding:"4px 6px",border:"1px solid #d1d5db",borderRadius:5,fontSize:12,textAlign:"center",outline:"none"}}/>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
-              <Btn variant="secondary" onClick={()=>setShowPrazos(false)}>Cancelar</Btn>
-              <Btn onClick={()=>{setPrazos(formPrazos);setShowPrazos(false);}}>Salvar prazos</Btn>
-            </div>
-          </Modal>
-        )}
-
-        {/* Modal numeração */}
-        {showNumeracao && (
-          <Modal title="Controle de Numeração" onClose={()=>setShowNumeracao(false)}>
-            {Object.entries(formNum).map(([k,v])=>(
-              <div key={k} style={{display:"flex",alignItems:"center",gap:12,marginBottom:8,padding:"8px 10px",background:"#f9fafb",borderRadius:7}}>
-                <span style={{flex:1,fontSize:13,fontWeight:500}}>{k.replace(/([A-Z])/g," $1").trim()}</span>
-                <span style={{fontSize:12,color:"#6b7280"}}>Último nº:</span>
-                <input type="number" value={v}
-                  onChange={e=>setFormNum(fn=>({...fn,[k]:Number(e.target.value)}))}
-                  style={{width:90,padding:"5px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:13,textAlign:"center",outline:"none"}}/>
-              </div>
-            ))}
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-              <Btn variant="secondary" onClick={()=>setShowNumeracao(false)}>Cancelar</Btn>
-              <Btn onClick={()=>{setNumeracao(formNum);setShowNumeracao(false);}}>Salvar</Btn>
-            </div>
-          </Modal>
-        )}
-
-        {/* Modal processo */}
-        {modal && (
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:2000,overflowY:"auto",padding:"16px 12px"}}>
-            <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:780,overflow:"hidden"}}>
-              <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{color:"#fff",fontWeight:700,fontSize:15}}>{modal==="new"?"Novo Processo":"Editar Processo"}</span>
-                <button onClick={()=>setModal(null)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕</button>
-              </div>
-              {/* Abas internas */}
-              <div style={{display:"flex",borderBottom:"1px solid #e5e7eb",background:"#f9fafb"}}>
-                {["dados","andamentos","investigados"].map(a=>(
-                  <button key={a} onClick={()=>setModalAba(a)} style={{padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:12,fontWeight:modalAba===a?700:400,color:modalAba===a?"#1e3a5f":"#6b7280",borderBottom:modalAba===a?"2px solid #1e3a5f":"none"}}>
-                    {a==="dados"?"📋 Dados":a==="andamentos"?"📝 Andamentos":"👤 Investigados"}
-                  </button>
-                ))}
-              </div>
-              <div style={{padding:20,maxHeight:"70vh",overflowY:"auto"}}>
-
-                {/* ABA DADOS */}
-                {modalAba==="dados" && (
-                  <div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:4}}>
-                      <Input label="Data de Instauração" type="date" value={form.dataInstauracao||""} onChange={e=>sf("dataInstauracao",e.target.value)}/>
-                      <Input label="Data de Carga" type="date" value={form.dataCarga||""} onChange={e=>{sf("dataCarga",e.target.value);}}/>
-                      <Input label="Data de Distribuição" type="date" value={form.dataDistribuicao||""} onChange={e=>sf("dataDistribuicao",e.target.value)}/>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                      <Select label="Tipo de Processo" value={form.tipo||"IPM"} onChange={e=>sf("tipo",e.target.value)}>
-                        {TIPOS_PROCESSO.map(t=><option key={t} value={t}>{t}</option>)}
-                      </Select>
-                      <Input label="Número do Processo" value={form.numProcesso||""} onChange={e=>sf("numProcesso",e.target.value)}/>
-                    </div>
-                    {/* Encarregado */}
-                    <div style={{marginBottom:12}}>
-                      <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Encarregado</label>
-                      {form.encarregadoId ? (
-                        <div style={{display:"flex",alignItems:"center",gap:8,background:"#f0f4ff",borderRadius:7,padding:"7px 10px"}}>
-                          <Avatar name={getOfficer(form.encarregadoId)?.nome||form.encarregadoNome||""} size={28}/>
-                          <span style={{fontSize:13,flex:1}}>{form.encarregadoNome}</span>
-                          <button onClick={()=>{sf("encarregadoId",null);sf("encarregadoNome","");}} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
-                        </div>
-                      ) : (
-                        <div>
-                          <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{sf("encarregadoId",o.id);sf("encarregadoNome",o.nome);}}/>
-                          <div style={{display:"flex",gap:8,marginTop:4}}>
-                            <input value={form.encarregadoManual||""} onChange={e=>sf("encarregadoManual",e.target.value)} placeholder="Ou digitar manualmente..." style={{flex:1,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
-                            <Btn small onClick={()=>{if(form.encarregadoManual){sf("encarregadoNome",form.encarregadoManual);sf("encarregadoManual","");}}}>Usar</Btn>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <Textarea label="Fato/Resumo" value={form.fato||""} onChange={e=>sf("fato",e.target.value)} rows={2}/>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-                        <input type="checkbox" id="preso_chk" checked={!!form.preso} onChange={e=>sf("preso",e.target.checked)}/>
-                        <label htmlFor="preso_chk" style={{fontSize:13,cursor:"pointer",fontWeight:500}}>Preso</label>
-                      </div>
-                      <Input label="Dias de Prorrogação" type="number" value={form.diasProrroga||0} onChange={e=>sf("diasProrroga",Number(e.target.value))}/>
-                      <Select label="Status" value={form.status||"Pendente"} onChange={e=>sf("status",e.target.value)}>
-                        {STATUS_PROCESSO.map(s=><option key={s} value={s}>{s}</option>)}
-                      </Select>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:4}}>
-                      <Select label="Solução" value={form.solucao||""} onChange={e=>sf("solucao",e.target.value)}>
-                        <option value="">Sem solução</option>
-                        {Object.keys(PONTOS_PUNICAO).map(s=><option key={s} value={s}>{s} ({PONTOS_PUNICAO[s]} ponto{PONTOS_PUNICAO[s]>1?"s":""})</option>)}
-                        <option value="Absolvição">Absolvição</option>
-                        <option value="Remissão">Remissão</option>
-                        <option value="Arquivamento">Arquivamento</option>
-                      </Select>
-                      <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
-                    </div>
-                    <Textarea label="Observações" value={form.observacoes||""} onChange={e=>sf("observacoes",e.target.value)} rows={2}/>
-                    {/* Campos calculados */}
-                    {form.dataCarga && (
-                      <div style={{background:"#f0f4ff",borderRadius:8,padding:"10px 12px",marginTop:8,fontSize:12}}>
-                        <div>Data Limite: <strong>{fmtDate(calcDataLimite(form.dataCarga,form.tipo,form.diasProrroga,form.preso,prazos))}</strong></div>
-                        {(()=>{const sp=calcStatusPrazo(form.status,calcDataLimite(form.dataCarga,form.tipo,form.diasProrroga,form.preso,prazos));return <div>Status do prazo: <strong style={{color:sp.cor}}>{sp.label}</strong></div>;})()} 
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ABA ANDAMENTOS */}
-                {modalAba==="andamentos" && (
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Próximo passo</label>
-                      <div style={{display:"flex",gap:8}}>
-                        <input id="prox_passo_inp" placeholder="Descreva o próximo passo..." style={{flex:1,padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none"}}/>
-                        <Btn onClick={()=>{const inp=document.getElementById("prox_passo_inp");if(inp.value.trim()){addAndamento(inp.value.trim());inp.value="";}else alert("Digite o andamento.")}}>Registrar</Btn>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"40vh",overflowY:"auto"}}>
-                      {[...(form.andamentos||[])].reverse().map((a,i)=>(
-                        <div key={i} style={{background:"#f9fafb",borderRadius:7,padding:"8px 12px",borderLeft:"3px solid #1e3a5f"}}>
-                          <div style={{fontSize:11,color:"#6b7280",marginBottom:2}}>{a.dataHora} — {a.autor}</div>
-                          <div style={{fontSize:13}}>{a.texto}</div>
-                        </div>
-                      ))}
-                      {!(form.andamentos||[]).length && <p style={{color:"#9ca3af",fontSize:13}}>Nenhum andamento registrado.</p>}
-                    </div>
-                  </div>
-                )}
-
-                {/* ABA INVESTIGADOS */}
-                {modalAba==="investigados" && (
-                  <div>
-                    <div style={{marginBottom:12}}>
-                      <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Adicionar investigado</label>
-                      <BuscaPolicial officers={officers} excluirIds={(form.investigados||[]).map(i=>i.policialId).filter(Boolean)}
-                        onSelect={o=>addInvestigado({policialId:o.id,nome:o.nome,matricula:o.matricula})}/>
-                      <div style={{display:"flex",gap:8,marginTop:6}}>
-                        <input id="inv_nome" placeholder="Nome (manual)" style={{flex:2,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
-                        <input id="inv_mat" placeholder="Matrícula" style={{flex:1,padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}/>
-                        <Btn small onClick={()=>{const n=document.getElementById("inv_nome").value.trim(),m=document.getElementById("inv_mat").value.trim();if(n){addInvestigado({nome:n,matricula:m});document.getElementById("inv_nome").value="";document.getElementById("inv_mat").value="";}}}>+ Add</Btn>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {(form.investigados||[]).map((inv,i)=>(
-                        <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"#f9fafb",borderRadius:7}}>
-                          <Avatar name={inv.nome} size={28}/>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:13,fontWeight:500}}>{inv.nome}</div>
-                            <div style={{fontSize:11,color:"#6b7280"}}>{inv.matricula?`Mat. ${cleanMat(inv.matricula)}`:""}</div>
-                          </div>
-                          <button onClick={()=>sf("investigados",(form.investigados||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:15}}>✕</button>
-                        </div>
-                      ))}
-                      {!(form.investigados||[]).length && <p style={{color:"#9ca3af",fontSize:13}}>Nenhum investigado adicionado.</p>}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div style={{padding:"12px 20px",borderTop:"1px solid #e5e7eb",display:"flex",gap:8,justifyContent:"flex-end",background:"#f9fafb"}}>
-                <Btn variant="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
-                {podeEditar && <Btn onClick={saveProcesso}>💾 Salvar processo</Btn>}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Linha 1: Dashboard cards */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginBottom:12}}>
-          {dashCards.map(dc=>(
-            <div key={dc.tipo} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:9,padding:"10px 12px"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#1e3a5f",marginBottom:4}}>{dc.tipo}</div>
-              <div style={{fontSize:20,fontWeight:700,color:"#111827"}}>{dc.total}</div>
-              <div style={{fontSize:10,color:"#15803d"}}>✅ Em dia: {dc.emDia}</div>
-              {dc.atrasados>0 && <div style={{fontSize:10,color:"#dc2626"}}>⚠️ Atrasados: {dc.atrasados}</div>}
-            </div>
-          ))}
-        </div>
-
-        {/* Linha 2: Controle de numeração */}
-        {podeEditar && (
-          <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-            {Object.entries(numeracao).map(([k,v])=>(
-              <div key={k} style={{background:"#f0f4ff",border:"1px solid #bfdbfe",borderRadius:8,padding:"6px 12px",fontSize:11,cursor:"pointer"}} onClick={()=>{setFormNum({...numeracao});setShowNumeracao(true);}}>
-                <div style={{color:"#6b7280",marginBottom:2}}>{k.replace(/([A-Z])/g," $1").trim()}</div>
-                <div style={{fontWeight:700,fontSize:14,color:"#1e3a5f"}}>{v}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Linha 3: Filtros + ações */}
-        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="🔍 Processo, investigado, encarregado, SEI..."
-            style={{flex:1,minWidth:200,padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none"}}/>
-          <select value={fTipo} onChange={e=>setFTipo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos tipos</option>
-            {TIPOS_PROCESSO.map(t=><option key={t} value={t}>{t}</option>)}
-          </select>
-          <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos status</option>
-            {STATUS_PROCESSO.map(s=><option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={fEncarregado} onChange={e=>setFEncarregado(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos encarregados</option>
-            {encarregados.map(e=><option key={e} value={e}>{e}</option>)}
-          </select>
-          <select value={fPrazo} onChange={e=>setFPrazo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos prazos</option>
-            <option value="em_dia">Em dia</option>
-            <option value="atrasado">Atrasado</option>
-          </select>
-          {podeEditar && <Btn onClick={()=>{setFormPrazos({...prazos});setShowPrazos(true);}} variant="secondary" small>⚙️ Prazos</Btn>}
-          {podeEditar && <Btn onClick={openNew}>+ Novo processo</Btn>}
-        </div>
-
-        {/* Listagem */}
-        {filtrados.length===0 && <div style={{textAlign:"center",padding:24,color:"#9ca3af",background:"#fff",borderRadius:10,border:"1px solid #e5e7eb",fontSize:13}}>Nenhum processo encontrado.</div>}
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-            <thead>
-              <tr style={{background:"#1e3a5f",color:"#fff"}}>
-                {["Instauração","Nº Portaria","Tipo","Encarregado","SEI","Investigados","Status","Prazo"].map(h=>(
-                  <th key={h} style={{padding:"8px 10px",textAlign:"left",whiteSpace:"nowrap"}}>{h}</th>
-                ))}
-                <th style={{padding:"8px 10px"}}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtrados.map((p,i)=>{
-                const sp = calcStatusPrazo(p.status, p.dataLimite);
-                const atrasado = sp.label.includes("Atrasado");
-                const rowBg = atrasado ? "#fff5f5" : i%2===0?"#fff":"#f9fafb";
-                return (
-                  <tr key={p.id} style={{background:rowBg,borderBottom:"1px solid #f0f0f0",cursor:"pointer"}} onClick={()=>openEdit(p)}>
-                    <td style={{padding:"7px 10px",whiteSpace:"nowrap"}}>{fmtDate(p.dataInstauracao)}</td>
-                    <td style={{padding:"7px 10px"}}>{p.numProcesso||"—"}</td>
-                    <td style={{padding:"7px 10px"}}><Badge color="#dbeafe" textColor="#1d4ed8">{p.tipo}</Badge></td>
-                    <td style={{padding:"7px 10px"}}>{p.encarregadoNome||"—"}</td>
-                    <td style={{padding:"7px 10px",color:"#6b7280"}}>{p.sei||"—"}</td>
-                    <td style={{padding:"7px 10px"}}>
-                      {(p.investigados||[]).slice(0,2).map(inv=>inv.nome).join(", ")}
-                      {(p.investigados||[]).length>2&&` +${(p.investigados||[]).length-2}`}
-                    </td>
-                    <td style={{padding:"7px 10px"}}><Badge color={p.status==="Finalizado"?"#dcfce7":p.status==="Arquivado"?"#f3f4f6":"#fef3c7"} textColor={p.status==="Finalizado"?"#15803d":p.status==="Arquivado"?"#374151":"#92400e"}>{p.status}</Badge></td>
-                    <td style={{padding:"7px 10px",fontWeight:atrasado?700:400,color:sp.cor,whiteSpace:"nowrap"}}>{sp.label}</td>
-                    <td style={{padding:"7px 10px"}} onClick={e=>e.stopPropagation()}>
-                      {podeEditar && <Btn small variant="danger" onClick={()=>setProcessos(ps=>ps.filter(x=>x.id!==p.id))}>🗑</Btn>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
-
-  // ── ABA ELOGIOS ────────────────────────────────────────────────────────────
-  function AbaElogios() {
-    const [modal, setModal] = useState(false);
-    const [form, setForm] = useState({});
-    const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-
-    function save() {
-      if (!form.data) { alert("Data obrigatória."); return; }
-      const novo = {...form, id:Date.now()};
-      if (form.id) setElogios(es=>es.map(e=>e.id===form.id?novo:e));
-      else setElogios(es=>[...es,novo]);
-      setModal(false);
-    }
-
-    return (
-      <div>
-        {modal && (
-          <Modal title={form.id?"Editar Elogio":"Novo Elogio"} onClose={()=>setModal(false)} wide>
-            <Input label="Data do Despacho" type="date" value={form.data||""} onChange={e=>sf("data",e.target.value)}/>
-            <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
-            <div style={{marginBottom:12}}>
-              <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Policiais contemplados</label>
-              <BuscaPolicial officers={officers} excluirIds={(form.policiais||[]).map(p=>p.policialId).filter(Boolean)}
-                onSelect={o=>sf("policiais",[...(form.policiais||[]),{policialId:o.id,nome:o.nome,matricula:o.matricula}])}/>
-              <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
-                {(form.policiais||[]).map((p,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#f0f4ff",borderRadius:6}}>
-                    <span style={{flex:1,fontSize:12}}>{p.nome}</span>
-                    <button onClick={()=>sf("policiais",(form.policiais||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Textarea label="Nota/Descrição" value={form.nota||""} onChange={e=>sf("nota",e.target.value)} rows={3}/>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <input type="checkbox" id="pub_boletim" checked={!!form.publicadoBoletim} onChange={e=>sf("publicadoBoletim",e.target.checked)}/>
-              <label htmlFor="pub_boletim" style={{fontSize:12,cursor:"pointer"}}>Publicado em Boletim</label>
-            </div>
-            <Textarea label="Observações" value={form.observacoes||""} onChange={e=>sf("observacoes",e.target.value)} rows={2}/>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-              <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
-              <Btn onClick={save}>Salvar</Btn>
-            </div>
-          </Modal>
-        )}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>Elogios</h3><span style={{fontSize:12,color:"#6b7280"}}>{elogios.length} registro(s)</span></div>
-          {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo elogio</Btn>}
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {[...elogios].sort((a,b)=>(b.data||"").localeCompare(a.data||"")).map(e=>(
-            <Card key={e.id} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{fmtDate(e.data)} {e.sei&&<span style={{color:"#6b7280",fontWeight:400}}>— SEI {e.sei}</span>}</div>
-                <div style={{fontSize:12,color:"#374151",marginBottom:4}}>{e.nota}</div>
-                <div style={{fontSize:11,color:"#6b7280"}}>{(e.policiais||[]).map(p=>p.nome).join(", ")}</div>
-              </div>
-              {e.publicadoBoletim && <Badge color="#dcfce7" textColor="#15803d" size={10}>Publicado no BGO</Badge>}
-              {podeEditar && (
-                <div style={{display:"flex",gap:4}}>
-                  <Btn small variant="secondary" onClick={()=>{setForm(e);setModal(true);}}>✏️</Btn>
-                  <Btn small variant="danger" onClick={()=>setElogios(es=>es.filter(x=>x.id!==e.id))}>🗑</Btn>
-                </div>
-              )}
-            </Card>
-          ))}
-          {!elogios.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum elogio registrado.</div>}
-        </div>
-      </div>
-    );
-  }
-
-  // ── ABA MILAE ──────────────────────────────────────────────────────────────
-  function AbaMilae() {
-    const [modal, setModal] = useState(false);
-    const [form, setForm] = useState({});
-    const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-    function save() {
-      const novo = {...form, id:Date.now()};
-      if (form.id) setMilae(ms=>ms.map(m=>m.id===form.id?novo:m));
-      else setMilae(ms=>[...ms,novo]);
-      setModal(false);
-    }
-    return (
-      <div>
-        {modal && (
-          <Modal title="Registro MILAE" onClose={()=>setModal(false)} wide>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Input label="Data do Fato" type="date" value={form.dataFato||""} onChange={e=>sf("dataFato",e.target.value)}/>
-              <Input label="Número" value={form.numero||""} onChange={e=>sf("numero",e.target.value)}/>
-            </div>
-            <Input label="Local" value={form.local||""} onChange={e=>sf("local",e.target.value)}/>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Input label="Resistente" value={form.resistente||""} onChange={e=>sf("resistente",e.target.value)}/>
-              <Input label="Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
-            </div>
-            <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
-              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
-                <input type="checkbox" checked={!!form.preso} onChange={e=>sf("preso",e.target.checked)}/> Preso
-              </label>
-              <Input label="Dias Prorrogação" type="number" value={form.diasProrroga||0} onChange={e=>sf("diasProrroga",e.target.value)}/>
-            </div>
-            <div style={{marginBottom:12}}>
-              <label style={{display:"block",fontSize:12,fontWeight:500,color:"#374151",marginBottom:4}}>Policiais envolvidos</label>
-              <BuscaPolicial officers={officers} excluirIds={(form.policiais||[]).map(p=>p.policialId).filter(Boolean)}
-                onSelect={o=>sf("policiais",[...(form.policiais||[]),{policialId:o.id,nome:o.nome,matricula:o.matricula}])}/>
-              <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
-                {(form.policiais||[]).map((p,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#f0f4ff",borderRadius:6}}>
-                    <span style={{flex:1,fontSize:12}}>{p.nome}</span>
-                    <button onClick={()=>sf("policiais",(form.policiais||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer"}}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Textarea label="Medidas Adotadas" value={form.medidas||""} onChange={e=>sf("medidas",e.target.value)} rows={3}/>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-              <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
-              <Btn onClick={save}>Salvar</Btn>
-            </div>
-          </Modal>
-        )}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>MILAE</h3><span style={{fontSize:12,color:"#6b7280"}}>{milae.length} registro(s)</span></div>
-          {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo MILAE</Btn>}
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {[...milae].sort((a,b)=>(b.dataFato||"").localeCompare(a.dataFato||"")).map(m=>(
-            <Card key={m.id} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:13}}>{fmtDate(m.dataFato)} — Nº {m.numero||"—"}</div>
-                <div style={{fontSize:12,color:"#6b7280"}}>{m.local}</div>
-                <div style={{fontSize:12,color:"#374151",marginTop:4}}>{(m.policiais||[]).map(p=>p.nome).join(", ")}</div>
-                {m.medidas && <div style={{fontSize:11,color:"#374151",marginTop:4}}>{m.medidas}</div>}
-              </div>
-              {podeEditar && (
-                <div style={{display:"flex",gap:4}}>
-                  <Btn small variant="secondary" onClick={()=>{setForm(m);setModal(true);}}>✏️</Btn>
-                  <Btn small variant="danger" onClick={()=>setMilae(ms=>ms.filter(x=>x.id!==m.id))}>🗑</Btn>
-                </div>
-              )}
-            </Card>
-          ))}
-          {!milae.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum registro MILAE.</div>}
-        </div>
-      </div>
-    );
-  }
-
-  // ── ABA EXPEDIENTES ────────────────────────────────────────────────────────
-  function AbaExpedientes() {
-    const [modal, setModal] = useState(false);
-    const [form, setForm] = useState({});
-    const [verConcluidos, setVerConcluidos] = useState(false);
-    const [confirmConcluir, setConfirmConcluir] = useState(null);
-    const [proxAto, setProxAto] = useState({ato:"",dataLimite:""});
-    const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-    const hoje = new Date().toISOString().slice(0,10);
-
-    function save() {
-      const novo = {...form, id:form.id||Date.now(), concluido:false};
-      if (form.id) setExpedientes(es=>es.map(e=>e.id===form.id?novo:e));
-      else setExpedientes(es=>[...es,novo]);
-      setModal(false);
-    }
-
-    function tentarConcluir(exp) {
-      setConfirmConcluir(exp);
-      setProxAto({ato:"",dataLimite:""});
-    }
-
-    function confirmarConcluir(temProximo) {
-      const exp = confirmConcluir;
-      if (temProximo) {
-        if (!proxAto.ato || !proxAto.dataLimite) { alert("Preencha o próximo ato e data."); return; }
-        setExpedientes(es=>es.map(e=>e.id===exp.id?{...e,ato:proxAto.ato,dataLimite:proxAto.dataLimite,concluido:false}:e));
-      } else {
-        setExpedientes(es=>es.map(e=>e.id===exp.id?{...e,concluido:true}:e));
-      }
-      setConfirmConcluir(null);
-    }
-
-    const filtrados = expedientes.filter(e=>verConcluidos?e.concluido:!e.concluido)
-      .sort((a,b)=>(a.dataLimite||"").localeCompare(b.dataLimite||""));
-
-    return (
-      <div>
-        {confirmConcluir && (
-          <Modal title="Concluir Expediente" onClose={()=>setConfirmConcluir(null)}>
-            <p style={{fontSize:13,marginBottom:12}}>Há um próximo ato para este expediente?</p>
-            <Textarea label="Próximo ato (opcional)" value={proxAto.ato} onChange={e=>setProxAto(x=>({...x,ato:e.target.value}))} rows={2}/>
-            {proxAto.ato && <Input label="Nova data limite" type="date" value={proxAto.dataLimite} onChange={e=>setProxAto(x=>({...x,dataLimite:e.target.value}))}/>}
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-              <Btn variant="secondary" onClick={()=>confirmarConcluir(false)}>Não — marcar concluído</Btn>
-              <Btn onClick={()=>confirmarConcluir(true)}>Sim — atualizar ato</Btn>
-            </div>
-          </Modal>
-        )}
-        {modal && (
-          <Modal title={form.id?"Editar Expediente":"Novo Expediente"} onClose={()=>setModal(false)}>
-            <Input label="Título" value={form.titulo||""} onChange={e=>sf("titulo",e.target.value)}/>
-            <Input label="Nº Processo SEI" value={form.sei||""} onChange={e=>sf("sei",e.target.value)}/>
-            <Textarea label="Ato (o que precisa ser feito)" value={form.ato||""} onChange={e=>sf("ato",e.target.value)} rows={2}/>
-            <Input label="Data Limite" type="date" value={form.dataLimite||""} onChange={e=>sf("dataLimite",e.target.value)}/>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <input type="checkbox" id="recorrente_chk" checked={!!form.recorrente} onChange={e=>sf("recorrente",e.target.checked)}/>
-              <label htmlFor="recorrente_chk" style={{fontSize:12,cursor:"pointer"}}>Recorrência mensal</label>
-            </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-              <Btn variant="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
-              <Btn onClick={save}>Salvar</Btn>
-            </div>
-          </Modal>
-        )}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div><h3 style={{margin:0,fontSize:16,fontWeight:700}}>Expedientes</h3><span style={{fontSize:12,color:"#6b7280"}}>{filtrados.length} registro(s)</span></div>
-          <div style={{display:"flex",gap:8}}>
-            <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
-              <button onClick={()=>setVerConcluidos(false)} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:!verConcluidos?600:400,background:!verConcluidos?"#1e3a5f":"transparent",color:!verConcluidos?"#fff":"#374151"}}>Pendentes</button>
-              <button onClick={()=>setVerConcluidos(true)} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:verConcluidos?600:400,background:verConcluidos?"#374151":"transparent",color:verConcluidos?"#fff":"#374151"}}>Concluídos</button>
-            </div>
-            {podeEditar && <Btn onClick={()=>{setForm({});setModal(true);}}>+ Novo expediente</Btn>}
-          </div>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {filtrados.map(e=>{
-            const atrasado = !e.concluido && e.dataLimite && e.dataLimite < hoje;
-            return (
-              <Card key={e.id} style={{borderLeft:`3px solid ${atrasado?"#dc2626":e.recorrente?"#7c3aed":"#1e3a5f"}`,background:atrasado?"#fff5f5":"#fff"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:13,color:atrasado?"#dc2626":"#111827"}}>{e.titulo}</div>
-                    {e.sei && <div style={{fontSize:11,color:"#6b7280"}}>SEI: {e.sei}</div>}
-                    <div style={{fontSize:12,color:"#374151",marginTop:4}}>{e.ato}</div>
-                    <div style={{fontSize:11,color:atrasado?"#dc2626":"#6b7280",marginTop:2}}>
-                      Prazo: {fmtDate(e.dataLimite)} {atrasado&&"— ATRASADO"} {e.recorrente&&"🔄"}
-                    </div>
-                  </div>
-                  {podeEditar && !e.concluido && (
-                    <div style={{display:"flex",gap:4,marginLeft:8}}>
-                      <Btn small variant="success" onClick={()=>tentarConcluir(e)}>✓ Concluído</Btn>
-                      <Btn small variant="secondary" onClick={()=>{setForm(e);setModal(true);}}>✏️</Btn>
-                      <Btn small variant="danger" onClick={()=>setExpedientes(es=>es.filter(x=>x.id!==e.id))}>🗑</Btn>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-          {!filtrados.length && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhum expediente {verConcluidos?"concluído":"pendente"}.</div>}
-        </div>
-      </div>
-    );
-  }
-
-  // ── RENDER PRINCIPAL ───────────────────────────────────────────────────────
-  return (
-    <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Corregedoria</h2>
-      </div>
-      {/* Abas superiores */}
-      <div style={{display:"flex",borderBottom:"2px solid #e5e7eb",marginBottom:16,gap:0}}>
-        {[
-          {id:"processos",  label:"⚖️ Processos"},
-          {id:"elogios",    label:"🏅 Elogios"},
-          {id:"milae",      label:"🛡️ MILAE"},
-          {id:"expedientes",label:"📋 Expedientes"},
         ].map(a=>(
           <button key={a.id} onClick={()=>setAba(a.id)}
             style={{padding:"10px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,
@@ -3574,10 +3586,10 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
           </button>
         ))}
       </div>
-      {aba==="processos"   && AbaProcessos()}
-      {aba==="elogios"     && AbaElogios()}
-      {aba==="milae"       && AbaMilae()}
-      {aba==="expedientes" && AbaExpedientes()}
+      {aba==="processos"   && <AbaProcessos officers={officers} podeEditar={podeEditar} loggedUser={loggedUser} processos={processos} setProcessos={setProcessos} prazos={prazos} setPrazos={setPrazos} numeracao={numeracao} setNumeracao={setNumeracao}/>}
+      {aba==="elogios"     && <AbaElogios officers={officers} podeEditar={podeEditar} loggedUser={loggedUser} elogios={elogios} setElogios={setElogios}/>}
+      {aba==="milae"       && <AbaMilae officers={officers} podeEditar={podeEditar} loggedUser={loggedUser} milae={milae} setMilae={setMilae}/>}
+      {aba==="expedientes" && <AbaExpedientes officers={officers} podeEditar={podeEditar} loggedUser={loggedUser} expedientes={expedientes} setExpedientes={setExpedientes}/>}
     </div>
   );
 }
