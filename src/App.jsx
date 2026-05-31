@@ -1223,6 +1223,45 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
 // ──────────────────────────────────────────────
 // MÓDULO EFETIVO
 // ──────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// GESTÃO DE ANTIGUIDADE (componente top-level)
+// ──────────────────────────────────────────────
+function GerirAntiguidade({ officers, setOfficers }) {
+  const [grauSel, setGrauSel] = React.useState(RANK_ORDER.find(r=>officers.some(o=>o.grau===r))||RANK_ORDER[0]);
+  const polsGrau = [...officers.filter(o=>o.grau===grauSel&&!SITUACOES_INATIVO.includes(o.situacao||"Ativo"))]
+    .sort((a,b)=>(a.antiguidade??9999)-(b.antiguidade??9999));
+  return (
+    <div style={{padding:20}}>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:500,color:"#374151",display:"block",marginBottom:4}}>Grau hierárquico</label>
+        <select value={grauSel} onChange={e=>setGrauSel(e.target.value)}
+          style={{width:"100%",padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,background:"#fff"}}>
+          {RANK_ORDER.filter(r=>officers.some(o=>o.grau===r)).map(r=><option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <div style={{fontSize:12,color:"#6b7280",marginBottom:10}}>{polsGrau.length} policial(is) — edite o número de ordem (1 = mais antigo):</div>
+      <div style={{maxHeight:"50vh",overflowY:"auto"}}>
+        {polsGrau.map((o,i)=>(
+          <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+            <input type="number" min="1" value={o.antiguidade??i+1}
+              onChange={e=>setOfficers(os=>os.map(x=>x.id===o.id?{...x,antiguidade:Number(e.target.value)}:x))}
+              style={{width:60,padding:"5px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:13,textAlign:"center",outline:"none"}}/>
+            <Avatar name={o.nome} size={28}/>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13}}>{o.nome.toUpperCase()}</div>
+              <div style={{fontSize:11,color:"#6b7280"}}>{o.grau} · Mat. {cleanMat(o.matricula)}</div>
+            </div>
+          </div>
+        ))}
+        {polsGrau.length===0&&<p style={{color:"#9ca3af",textAlign:"center",fontSize:13}}>Nenhum policial neste grau.</p>}
+      </div>
+      <div style={{marginTop:12,background:"#f0f4ff",borderRadius:7,padding:"8px 12px",fontSize:11,color:"#1e3a5f"}}>
+        ℹ️ Os números definem a ordem dentro do grau. 1 = mais antigo. Após promoção, o número é definido pela classificação no curso.
+      </div>
+    </div>
+  );
+}
+
 function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastamentos, corregedoria, cursos, vantagens, promocoes, setPromocoes, initialFilter, onFilterConsumed, onOpenFeriasPlan }) {
   const [search, setSearch] = useState("");
   const [fRank, setFRank] = useState("todos");
@@ -1233,6 +1272,7 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
   const [fAtivo, setFAtivo] = useState("ativo"); // "ativo" | "inativo" | "todos"
   const [filterIds, setFilterIds] = useState(null); // set by dashboard click
   const [sortByAnt, setSortByAnt] = useState(false); // sort by antiguidade
+  const [gerirAnt, setGerirAnt] = useState(false); // manage antiguidade screen
 
   useEffect(()=>{
     if (!initialFilter) return;
@@ -1315,6 +1355,19 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
         </Modal>
       )}
 
+      {/* Modal: Gerir Antiguidade */}
+      {gerirAnt && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:680,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15}}>📋 Gestão de Antiguidade</span>
+              <button onClick={()=>setGerirAnt(false)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕ Fechar</button>
+            </div>
+            <GerirAntiguidade officers={officers} setOfficers={setOfficers}/>
+          </div>
+        </div>
+      )}
+
       {/* Alerta CNH vencendo — compacto com expand */}
       {(()=>{
         const hj = new Date();
@@ -1347,6 +1400,10 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>setSortByAnt(s=>!s)} style={{padding:"7px 12px",border:`1px solid ${sortByAnt?"#1e3a5f":"#d1d5db"}`,borderRadius:7,fontSize:12,cursor:"pointer",background:sortByAnt?"#1e3a5f":"#fff",color:sortByAnt?"#fff":"#374151",fontWeight:sortByAnt?600:400}}>
             {sortByAnt?"↕ Antiguidade ✓":"↕ Antiguidade"}
+          </button>
+          <button onClick={()=>setGerirAnt(true)} style={{padding:"7px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,cursor:"pointer",background:"#fff",color:"#374151"}}>📋 Gerir Antiguidade</button>
+          <button onClick={()=>setGerirAnt(true)} style={{padding:"7px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,cursor:"pointer",background:"#fff",color:"#374151"}}>
+            📋 Gerir Antiguidade
           </button>
           {(perm.editarTudo||perm.efetivo) && <Btn onClick={()=>setAdding(true)}>+ Novo policial</Btn>}
         </div>
@@ -1421,17 +1478,22 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
 // ──────────────────────────────────────────────
 // MÓDULO LOCAIS DE TRABALHO
 // ──────────────────────────────────────────────
-function ModLocais({ locations, setLocations, officers }) {
+function ModLocais({ locations, setLocations, officers, setOfficers }) {
   const [novo, setNovo] = useState("");
-  const [editIdx, setEditIdx] = useState(null);
-  const [editVal, setEditVal] = useState("");
   const [search, setSearch] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [localDetalhe, setLocalDetalhe] = useState(null); // local selecionado para gerenciar policiais
+  const [buscarPol, setBuscarPol] = useState("");
 
-  const usoCounts = useMemo(() => {
-    const c = {};
-    officers.forEach(o => { if (o.localTrabalho) c[o.localTrabalho]=(c[o.localTrabalho]||0)+1; });
-    return c;
+  // Policiais agrupados por local
+  const policiaisPorLocal = useMemo(() => {
+    const map = {};
+    officers.forEach(o => {
+      const loc = o.localTrabalho || "(Sem local)";
+      if (!map[loc]) map[loc] = [];
+      map[loc].push(o);
+    });
+    return map;
   }, [officers]);
 
   function add() {
@@ -1442,24 +1504,97 @@ function ModLocais({ locations, setLocations, officers }) {
     setNovo("");
   }
 
-  function saveEdit(idx) {
-    const t = editVal.trim().toUpperCase();
-    if (!t) return;
-    if (locations.includes(t) && locations[idx]!==t) { alert("Nome já existe."); return; }
-    const oldName = locations[idx];
-    setLocations(ls=>ls.map((l,i)=>i===idx?t:l).sort());
-    setEditIdx(null);
+  function del(loc) {
+    const count = (policiaisPorLocal[loc]||[]).length;
+    if (count > 0) { alert(`Este local está em uso por ${count} policial(is). Mova-os antes de excluir.`); return; }
+    setLocations(ls=>ls.filter(l=>l!==loc));
   }
 
-  function del(idx) {
-    const l = locations[idx];
-    const count = usoCounts[l]||0;
-    if (count>0) { alert(`Este local está em uso por ${count} policial(is). Reassine-os antes de excluir.`); return; }
-    setLocations(ls=>ls.filter((_,i)=>i!==idx));
+  // Mover policial para este local
+  function adicionarPolicial(officer) {
+    setOfficers(os=>os.map(o=>o.id===officer.id?{...o,localTrabalho:localDetalhe}:o));
+  }
+
+  // Remover policial deste local (deixa sem local)
+  function removerPolicial(officer) {
+    setOfficers(os=>os.map(o=>o.id===officer.id?{...o,localTrabalho:""}:o));
   }
 
   const filtered = locations.filter(l=>l.toLowerCase().includes(search.toLowerCase()));
 
+  // Se estiver no detalhe de um local
+  if (localDetalhe) {
+    const polsNoLocal = (policiaisPorLocal[localDetalhe]||[]).sort(rankSort);
+    const polsSemEsse = officers.filter(o=>(o.localTrabalho||"")!==localDetalhe &&
+      !["Transferido","Reserva/Inativo"].includes(o.situacao||"Ativo")
+    ).sort(rankSort);
+    const polsFiltrados = buscarPol.trim()
+      ? polsSemEsse.filter(o=>o.nome.toLowerCase().includes(buscarPol.toLowerCase())||
+          (o.matricula||"").includes(buscarPol))
+      : polsSemEsse;
+
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <button onClick={()=>{setLocalDetalhe(null);setBuscarPol("");}}
+            style={{background:"none",border:"none",color:"#1e3a5f",cursor:"pointer",fontSize:20,padding:0}}>←</button>
+          <div>
+            <h2 style={{fontSize:18,fontWeight:700,margin:0}}>{localDetalhe}</h2>
+            <span style={{fontSize:12,color:"#6b7280"}}>{polsNoLocal.length} policial(is) neste local</span>
+          </div>
+        </div>
+
+        {/* Policiais neste local */}
+        <Card style={{marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:10}}>
+            Policiais em {localDetalhe}
+          </div>
+          {polsNoLocal.length===0 && (
+            <p style={{color:"#9ca3af",fontSize:13,textAlign:"center"}}>Nenhum policial neste local.</p>
+          )}
+          {polsNoLocal.map(o=>(
+            <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+              <Avatar name={o.nome} size={32}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{o.nome.toUpperCase()}</div>
+                <div style={{fontSize:11,color:"#6b7280"}}>{o.grau} · Mat. {cleanMat(o.matricula)}</div>
+              </div>
+              <Btn small variant="danger" onClick={()=>setConfirm({
+                msg:`Remover ${o.nome} de ${localDetalhe}?`,
+                action:()=>removerPolicial(o)
+              })}>✕ Remover</Btn>
+            </div>
+          ))}
+        </Card>
+
+        {/* Adicionar policiais */}
+        <Card>
+          <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:10}}>
+            Adicionar policiais a {localDetalhe}
+          </div>
+          <input value={buscarPol} onChange={e=>setBuscarPol(e.target.value)}
+            placeholder="🔍 Buscar por nome ou matrícula..."
+            style={{width:"100%",padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+          <div style={{maxHeight:400,overflowY:"auto"}}>
+            {polsFiltrados.slice(0,50).map(o=>(
+              <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <Avatar name={o.nome} size={28}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:500}}>{o.nome.toUpperCase()}</div>
+                  <div style={{fontSize:11,color:"#6b7280"}}>{o.grau} · {o.localTrabalho||"Sem local"}</div>
+                </div>
+                <Btn small onClick={()=>adicionarPolicial(o)}>+ Adicionar</Btn>
+              </div>
+            ))}
+            {polsFiltrados.length===0 && <p style={{color:"#9ca3af",fontSize:13,textAlign:"center"}}>Nenhum policial encontrado.</p>}
+          </div>
+        </Card>
+        {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
+      </div>
+    );
+  }
+
+  // Lista de locais
   return (
     <div>
       {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
@@ -1472,38 +1607,29 @@ function ModLocais({ locations, setLocations, officers }) {
         <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:10}}>Adicionar novo local</div>
         <div style={{display:"flex",gap:8}}>
           <input value={novo} onChange={e=>setNovo(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}
-            placeholder="Nome do local (ex: 1º PEL/CENTRO)" 
+            placeholder="Nome do local (ex: 1º PEL/CENTRO)"
             style={{flex:1,padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none"}}/>
           <Btn onClick={add}>Adicionar</Btn>
         </div>
       </Card>
 
       <Card>
-        <div style={{marginBottom:12}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filtrar locais..."
-            style={{width:"100%",padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
-        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filtrar locais..."
+          style={{width:"100%",padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:13,outline:"none",boxSizing:"border-box",marginBottom:12}}/>
         {filtered.length===0 && <p style={{color:"#9ca3af",fontSize:13,textAlign:"center"}}>Nenhum local encontrado.</p>}
-        {filtered.map((l,idx)=>{
-          const realIdx = locations.indexOf(l);
-          const uso = usoCounts[l]||0;
+        {filtered.map(l=>{
+          const count = (policiaisPorLocal[l]||[]).length;
           return (
-            <div key={l} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
-              {editIdx===realIdx ? (
-                <>
-                  <input value={editVal} onChange={e=>setEditVal(e.target.value)} autoFocus
-                    style={{flex:1,padding:"6px 8px",border:"1px solid #1e3a5f",borderRadius:6,fontSize:13,outline:"none"}}/>
-                  <Btn small onClick={()=>saveEdit(realIdx)}>✓</Btn>
-                  <Btn small variant="secondary" onClick={()=>setEditIdx(null)}>✕</Btn>
-                </>
-              ) : (
-                <>
-                  <span style={{flex:1,fontSize:13,color:"#374151"}}>{l}</span>
-                  {uso>0 && <Badge color="#dbeafe" textColor="#1d4ed8">{uso} pol.</Badge>}
-                  <Btn small variant="secondary" onClick={()=>{setEditIdx(realIdx);setEditVal(l);}}>✏️</Btn>
-                  <Btn small variant="danger" onClick={()=>del(realIdx)}>🗑</Btn>
-                </>
-              )}
+            <div key={l} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 0",borderBottom:"1px solid #f3f4f6",cursor:"pointer"}}
+              onClick={()=>setLocalDetalhe(l)}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13,color:"#1e3a5f"}}>{l}</div>
+                <div style={{fontSize:11,color:"#6b7280"}}>{count} policial(is)</div>
+              </div>
+              <Badge color="#dbeafe" textColor="#1d4ed8">{count}</Badge>
+              <span style={{color:"#9ca3af",fontSize:14}}>›</span>
+              <button onClick={e=>{e.stopPropagation();setConfirm({msg:`Excluir local "${l}"?`,action:()=>del(l)});}}
+                style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:13,padding:"0 4px"}}>🗑</button>
             </div>
           );
         })}
@@ -1512,9 +1638,6 @@ function ModLocais({ locations, setLocations, officers }) {
   );
 }
 
-// ──────────────────────────────────────────────
-// MÓDULO SSO - FÉRIAS (por mês/ano, 01-30, com arquivamento)
-// ──────────────────────────────────────────────
 function ModFerias({ officers, ferias, setFerias, loggedUser, initialDetalhe, onDetalheConsumed }) {
   const [relHtml, setRelHtml] = useState("");
 
@@ -4553,7 +4676,7 @@ export default function App() {
           </div>
         )}
         {page==="efetivo" && <ModEfetivo officers={officers} setOfficers={setOfficers} perm={perm} locations={locations} ferias={ferias} afastamentos={afastamentos} corregedoria={corregedoria} cursos={cursos} vantagens={vantagens} promocoes={promocoes} setPromocoes={setPromocoes} initialFilter={dashFilter} onFilterConsumed={()=>setDashFilter(null)} onOpenFeriasPlan={plan=>{setFeriasDetalhe(plan);setPage("ferias");}}/>}
-        {page==="locais" && <ModLocais locations={locations} setLocations={setLocations} officers={officers}/>}
+        {page==="locais" && <ModLocais locations={locations} setLocations={setLocations} officers={officers} setOfficers={setOfficers}/>}
         {page==="ferias" && <ModFerias officers={officers} ferias={ferias} setFerias={setFerias} setOfficers={setOfficers} loggedUser={loggedUser} initialDetalhe={feriasDetalhe} onDetalheConsumed={()=>setFeriasDetalhe(null)}/>}
         {page==="saude" && <ModSaude officers={officers} afastamentos={afastamentos} setAfastamentos={setAfastamentos} setOfficers={setOfficers} loggedUser={loggedUser}/>}
         {page==="cursos" && <ModCursos officers={officers} cursos={cursos} setCursos={setCursos} loggedUser={loggedUser} setOfficers={setOfficers}/>}
