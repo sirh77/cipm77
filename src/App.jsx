@@ -519,11 +519,11 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
     {label:"Feminino",            value:fem,                     color:"#7e3af2", bg:"#ede9fe", filter:{type:"sexo",value:"FEM"}},
   ];
 
-  // Cards dinâmicos por local de trabalho (apenas locais cadastrados)
+  // Locais cadastrados no módulo (vinculados ao cadastro oficial)
   const locationCards = (locations||[]).map(loc => {
-    const pols = ativos.filter(o=>(o.localTrabalho||"")===loc);
-    return { label:loc, value:pols.length, color:"#1e3a5f", bg:"#f0f4ff", filter:{type:"ids",ids:pols.map(o=>o.id)} };
-  }).filter(c=>c.value>0);
+    const pols = ativos.filter(o=>(o.localTrabalho||"")=== loc);
+    return { label:loc, value:pols.length, ids:pols.map(o=>o.id) };
+  });
 
   // ─── Alertas calculados ──────────────────────────────────────────
   const hoje2 = new Date();
@@ -602,7 +602,7 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
       )}
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
-        {[...statCards, ...locationCards].map(s=>(
+        {statCards.map(s=>(
           <div key={s.label} onClick={()=>onFilter&&onFilter(s.filter)}
             style={{background:s.bg||"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",cursor:onFilter?"pointer":"default",transition:"transform 0.1s,box-shadow 0.1s"}}
             onMouseEnter={e=>{if(onFilter){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,0.1)";}}}
@@ -630,10 +630,14 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
 
         <Card style={{maxHeight:340,overflowY:"auto"}}>
           <div style={{fontWeight:600,fontSize:14,marginBottom:12,color:"#374151"}}>Locais de trabalho</div>
-          {allLocs.map(([l,c])=>(
-            <div key={l} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-              <span style={{fontSize:11,color:"#6b7280",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l}</span>
-              <span style={{background:"#1e3a5f",color:"#fff",borderRadius:999,fontSize:11,fontWeight:600,padding:"1px 8px",minWidth:26,textAlign:"center"}}>{c}</span>
+          {locationCards.length===0 && <p style={{color:"#9ca3af",fontSize:12}}>Nenhum local cadastrado.</p>}
+          {locationCards.map(c=>(
+            <div key={c.label} onClick={()=>onFilter({type:"ids",ids:c.ids})}
+              style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,cursor:"pointer",padding:"3px 6px",borderRadius:6,transition:"background 0.1s"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <span style={{fontSize:11,color:"#374151",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{c.label}</span>
+              <span style={{background:"#1e3a5f",color:"#fff",borderRadius:999,fontSize:11,fontWeight:600,padding:"1px 8px",minWidth:26,textAlign:"center"}}>{c.value}</span>
             </div>
           ))}
         </Card>
@@ -3820,294 +3824,182 @@ const SUBST_MAPA = {
 };
 
 function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
-  const [aba, setAba] = useState("busca");
-  const [verConcluidas, setVerConcluidas] = useState(false);
-  const [masfModal, setMasfModal] = useState(false);
+  const [aba, setAba] = useState("lista");
+  const [confirm, setConfirm] = useState(null);
   const [masfOfficer, setMasfOfficer] = useState(null);
   const [masfData, setMasfData] = useState(null);
-  const [modalVant, setModalVant] = useState(null); // {mode:"new"|"edit", vant, officer}
-  const [formVant, setFormVant] = useState({});
-  const fv = (k,v) => setFormVant(f=>({...f,[k]:v}));
-  const [confirm, setConfirm] = useState(null);
-  const [selectedOfficer, setSelectedOfficer] = useState(null);
-  const [fGrau, setFGrau] = useState("todos");
-  const [fTipo, setFTipo] = useState("todos");
+  // Modal de edição em massa por tipo
+  const [modalEditar, setModalEditar] = useState(null); // {tipo, categoria} ex: {tipo:"4 Rodas", categoria:"cet"}
+  const [buscaEdicao, setBuscaEdicao] = useState("");
+  // Modal nova vantagem individual
+  const [modalNova, setModalNova] = useState(null);
+  const [formNova, setFormNova] = useState({});
 
-  const getOfficer = id => officers.find(o=>o.id===Number(id));
   const hoje = new Date().toISOString().slice(0,10);
+  const getOfficer = id => officers.find(o=>o.id===Number(id));
 
-  // Vantagens ativas = sem dataFim ou dataFim >= hoje
   const vantAtivas    = (vantagens||[]).filter(v=>!v.dataFim||v.dataFim>=hoje);
   const vantConcluidas= (vantagens||[]).filter(v=>v.dataFim&&v.dataFim<hoje);
-  const listaAtual    = verConcluidas ? vantConcluidas : vantAtivas;
 
-  function saveVant() {
-    if (!formVant.policialId) { alert("Selecione um policial."); return; }
-    if (!formVant.categoria)  { alert("Selecione a categoria."); return; }
-    if (modalVant?.mode==="edit") {
-      setVantagens(vs=>vs.map(v=>v.id===formVant.id?{...formVant}:v));
-    } else {
-      setVantagens(vs=>[...vs, {...formVant, id:Date.now(), policialId:Number(formVant.policialId)}]);
-    }
-    setModalVant(null);
-  }
+  // Grupos de vantagens ativas
+  const cetOp   = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="Operacional");
+  const cet4    = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="4 Rodas");
+  const cet2    = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="2 Rodas");
+  const substs  = vantAtivas.filter(v=>v.categoria==="subst");
 
-  function abrirNova(officer) {
-    setFormVant({policialId:officer.id, categoria:"cet", tipo:"Operacional", dataInicio:"", bio:"", dataFim:"", bioFim:""});
-    setModalVant({mode:"new", officer});
-  }
-
-  function abrirEditar(vant) {
-    const o = getOfficer(vant.policialId);
-    setFormVant({...vant});
-    setModalVant({mode:"edit", officer:o});
-  }
-
-  function concluirVant(vant) {
-    setVantagens(vs=>vs.map(v=>v.id===vant.id?{...v, dataFim:hoje}:v));
-  }
-
-  function excluirVant(id) {
-    setVantagens(vs=>vs.filter(v=>v.id!==id));
-  }
-
-  // Modal formulário de vantagem
-  function ModalVant() {
-    if (!modalVant) return null;
-    const isCet   = formVant.categoria==="cet";
-    const isSubst = formVant.categoria==="subst";
-    const isMasf  = formVant.categoria==="masf";
-    const o = modalVant.officer;
-    return (
-      <Modal title={modalVant.mode==="edit"?"Editar vantagem":"Nova vantagem"} onClose={()=>setModalVant(null)}>
-        {o && (
-          <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginBottom:12,fontSize:13}}>
-            <strong>{o.grau} {o.nome}</strong> — Mat. {cleanMat(o.matricula)}
-          </div>
-        )}
-        <Select label="Categoria" value={formVant.categoria||"cet"} onChange={e=>fv("categoria",e.target.value)}>
-          <option value="cet">CET</option>
-          <option value="subst">Substituição de Função</option>
-          <option value="masf">MASF</option>
-        </Select>
-        {isCet && (
-          <Select label="Tipo CET" value={formVant.tipo||"Operacional"} onChange={e=>fv("tipo",e.target.value)}>
-            <option value="Operacional">Operacional</option>
-            <option value="4 Rodas">4 Rodas (85%)</option>
-            <option value="2 Rodas">2 Rodas (105%)</option>
-          </Select>
-        )}
-        {isSubst && (
-          <Select label="Substituição de" value={formVant.grauSubst||""} onChange={e=>fv("grauSubst",e.target.value)}>
-            <option value="">Selecionar...</option>
-            {["ST PM","1º TEN PM","2º TEN PM","CAP PM","1º SGT PM","2º SGT PM","CB PM"].map(g=><option key={g} value={g}>{g}</option>)}
-          </Select>
-        )}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Input label="Data início" type="date" value={formVant.dataInicio||""} onChange={e=>fv("dataInicio",e.target.value)}/>
-          <Input label="BGO de início" value={formVant.bio||""} onChange={e=>fv("bio",e.target.value)} placeholder="BGO Nº 001/2026"/>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Input label="Data fim (deixe vazio se ativo)" type="date" value={formVant.dataFim||""} onChange={e=>fv("dataFim",e.target.value)}/>
-          <Input label="BGO de encerramento" value={formVant.bioFim||""} onChange={e=>fv("bioFim",e.target.value)} placeholder="BGO Nº 001/2026"/>
-        </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-          <Btn variant="secondary" onClick={()=>setModalVant(null)}>Cancelar</Btn>
-          <Btn onClick={saveVant}>Salvar</Btn>
-        </div>
-      </Modal>
-    );
-  }
-
-  function gerarMASF(officer, dataEmissao) {
-    const agora = dataEmissao ? new Date(dataEmissao+"T12:00:00") : new Date();
-    const d = agora.toLocaleDateString("pt-BR");
+  function gerarMASF(officer) {
     const cets = vantAtivas.filter(v=>v.policialId===officer.id&&v.categoria==="cet");
-    const substs = vantAtivas.filter(v=>v.policialId===officer.id&&v.categoria==="subst");
-    const cetDesc = cets.length>0 ? cets.map(c=>`CET ${c.tipo} (${c.bio||""})`).join(", ") : "CET Operacional";
-    const substDesc = substs.length>0 ? substs.map(s=>`Substituição de ${s.grauSubst} (${s.bio||""})`).join(", ") : null;
-    const emitidoPor = loggedUser ? `${loggedUser.grau||""} ${loggedUser.nome}`.trim() : "Sistema";
-    const html = `<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:24px 32px;">
-      <div style="text-align:center;margin-bottom:20px;">
-        <div style="font-weight:bold;font-size:12px;line-height:2.0;text-transform:uppercase;">
-          POLÍCIA MILITAR DA BAHIA<br/>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>
-          77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR<br/>VITÓRIA DA CONQUISTA - ÁREA LESTE
-        </div>
-        <div style="margin-top:14px;font-size:15px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;">DECLARAÇÃO — MASF</div>
+    const subs = vantAtivas.filter(v=>v.policialId===officer.id&&v.categoria==="subst");
+    const cetDesc = cets.length>0?cets.map(c=>`CET ${c.tipo} (${c.bio||""})`).join(", "):"CET Operacional";
+    const subDesc = subs.length>0?subs.map(s=>`Substituição de ${s.grauSubst} (${s.bio||""})`).join(", "):null;
+    const d = masfData?new Date(masfData+"T12:00:00").toLocaleDateString("pt-BR"):new Date().toLocaleDateString("pt-BR");
+    const emit = loggedUser?`${loggedUser.grau||""} ${loggedUser.nome}`.trim():"Sistema";
+    const html=`<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:24px 32px;">
+      <div style="text-align:center;margin-bottom:20px;font-weight:bold;font-size:12px;line-height:2;text-transform:uppercase;">
+        POLÍCIA MILITAR DA BAHIA<br/>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR<br/>VITÓRIA DA CONQUISTA - ÁREA LESTE
       </div>
-      <p style="font-size:13px;line-height:1.8;text-align:justify;">
-        Declaro que o(a) <strong>${officer.grau} PM ${officer.nome}</strong>, matrícula <strong>${cleanMat(officer.matricula)}</strong>, lotado(a) nesta Unidade, recebe as seguintes vantagens:
-      </p>
+      <div style="text-align:center;font-size:15px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;margin-bottom:20px;">DECLARAÇÃO — MASF</div>
+      <p style="font-size:13px;line-height:1.8;text-align:justify;">Declaro que o(a) <strong>${officer.grau} PM ${officer.nome}</strong>, matrícula <strong>${cleanMat(officer.matricula)}</strong>, lotado(a) nesta Unidade, recebe as seguintes vantagens:</p>
       <div style="margin:16px 0;padding:12px 16px;border:1px solid #ccc;border-radius:6px;background:#f9f9f9;">
         <p style="font-size:13px;margin:0 0 8px;"><strong>CET:</strong> ${cetDesc}</p>
-        ${substDesc?`<p style="font-size:13px;margin:0;"><strong>Substituição:</strong> ${substDesc}</p>`:""}
+        ${subDesc?`<p style="font-size:13px;margin:0;"><strong>Substituição:</strong> ${subDesc}</p>`:""}
       </div>
       <p style="font-size:13px;text-align:center;margin-top:32px;">Vitória da Conquista, ${d}.</p>
-      <div style="margin-top:48px;text-align:center;">
-        <div style="border-top:1px solid #000;display:inline-block;min-width:280px;padding-top:6px;font-size:12px;">
-          ${emitidoPor}<br/>Comandante — 77ª CIPM
-        </div>
-      </div>
+      <div style="margin-top:48px;text-align:center;"><div style="border-top:1px solid #000;display:inline-block;min-width:280px;padding-top:6px;font-size:12px;">${emit}<br/>Comandante — 77ª CIPM</div></div>
     </div>`;
-    return html;
+    const w=window.open("","_blank");
+    if(w){w.document.open();w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MASF</title></head><body>${html}</body></html>`);w.document.close();setTimeout(()=>w.print(),600);}
   }
 
-  // ── ABA BUSCA POR POLICIAL ─────────────────────────────────────────────────
-  function AbaBusca() {
+  // ── Tabela de vantagem (usada em cada grupo) ───────────────────────────────
+  function TabelaVant({ lista, titulo, cor, corText }) {
+    const policiais = lista.map(v=>({v, o:getOfficer(v.policialId)})).filter(x=>x.o).sort((a,b)=>rankSort(a.o,b.o));
     return (
-      <div>
-        <div style={{marginBottom:12}}>
-          <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>setSelectedOfficer(o)}/>
-        </div>
-        {selectedOfficer && (()=>{
-          const o = selectedOfficer;
-          const vAtivas = vantagens.filter(v=>v.policialId===o.id&&(!v.dataFim||v.dataFim>=hoje));
-          const vHist   = vantagens.filter(v=>v.policialId===o.id&&v.dataFim&&v.dataFim<hoje);
-          return (
-            <div>
-              <div style={{display:"flex",alignItems:"center",gap:10,background:"#f0f4ff",borderRadius:9,padding:"10px 14px",marginBottom:12}}>
-                <Avatar name={o.nome} size={36}/>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14}}>{o.nome.toUpperCase()}</div>
-                  <div style={{fontSize:12,color:"#6b7280"}}>{o.grau} · Mat. {cleanMat(o.matricula)}</div>
-                </div>
-                <Btn small onClick={()=>abrirNova(o)}>+ Vantagem</Btn>
-                <Btn small variant="secondary" onClick={()=>setMasfOfficer(o)}>📜 MASF</Btn>
-              </div>
-
-              {/* Vantagens ativas */}
-              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Vantagens ativas</div>
-              {vAtivas.length===0 && <p style={{color:"#9ca3af",fontSize:12,marginBottom:12}}>Nenhuma vantagem ativa.</p>}
-              {vAtivas.map(v=>(
-                <div key={v.id} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"10px 12px",marginBottom:6,display:"flex",gap:10,alignItems:"flex-start"}}>
-                  <div style={{flex:1}}>
-                    <Badge color="#dbeafe" textColor="#1d4ed8">{v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}</Badge>
-                    <div style={{fontSize:11,color:"#6b7280",marginTop:4}}>Início: {fmtDate(v.dataInicio)} {v.bio&&`· ${v.bio}`}</div>
-                  </div>
-                  <div style={{display:"flex",gap:4}}>
-                    <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
-                    <Btn small variant="warning" onClick={()=>setConfirm({msg:`Concluir esta vantagem?`,action:()=>concluirVant(v)})}>⏹ Concluir</Btn>
-                    <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir esta vantagem?",action:()=>excluirVant(v.id)})}>🗑</Btn>
-                  </div>
-                </div>
-              ))}
-
-              {/* Histórico */}
-              {vHist.length>0 && (
-                <div style={{marginTop:12}}>
-                  <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>📋 Histórico (concluídas)</div>
-                  {vHist.map(v=>(
-                    <div key={v.id} style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",marginBottom:6,display:"flex",gap:10,alignItems:"flex-start",opacity:0.8}}>
-                      <div style={{flex:1}}>
-                        <Badge color="#f3f4f6" textColor="#374151">{v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}</Badge>
-                        <div style={{fontSize:11,color:"#6b7280",marginTop:4}}>
-                          {fmtDate(v.dataInicio)} → {fmtDate(v.dataFim)} {v.bio&&`· ${v.bio}`}
-                        </div>
-                      </div>
-                      <div style={{display:"flex",gap:4}}>
-                        <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
-                        <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir do histórico?",action:()=>excluirVant(v.id)})}>🗑</Btn>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </div>
-    );
-  }
-
-  // ── ABA LISTA GERAL ────────────────────────────────────────────────────────
-  function AbaLista() {
-    const lista = listaAtual.filter(v=>{
-      if (fGrau!=="todos") { const o=getOfficer(v.policialId); if(!o||o.grau!==fGrau) return false; }
-      if (fTipo!=="todos" && v.categoria!==fTipo) return false;
-      return true;
-    }).sort((a,b)=>{
-      const oa=getOfficer(a.policialId)||{}, ob=getOfficer(b.policialId)||{};
-      return rankSort(oa,ob);
-    });
-    return (
-      <div>
-        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-          <select value={fGrau} onChange={e=>setFGrau(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos os graus</option>
-            {RANK_ORDER.filter(r=>officers.some(o=>o.grau===r)).map(r=><option key={r} value={r}>{r}</option>)}
-          </select>
-          <select value={fTipo} onChange={e=>setFTipo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
-            <option value="todos">Todos os tipos</option>
-            <option value="cet">CET</option>
-            <option value="subst">Substituição</option>
-          </select>
-          <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
-            <button onClick={()=>setVerConcluidas(false)} style={{padding:"7px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:!verConcluidas?600:400,background:!verConcluidas?"#1e3a5f":"transparent",color:!verConcluidas?"#fff":"#374151"}}>Ativas</button>
-            <button onClick={()=>setVerConcluidas(true)} style={{padding:"7px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:verConcluidas?600:400,background:verConcluidas?"#374151":"transparent",color:verConcluidas?"#fff":"#374151"}}>Histórico</button>
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div>
+            <Badge color={cor} textColor={corText}>{titulo}</Badge>
+            <span style={{fontSize:12,color:"#6b7280",marginLeft:8}}>{policiais.length} policial(is)</span>
           </div>
+          <Btn small variant="secondary" onClick={()=>{setBuscaEdicao("");setModalEditar({titulo, lista});}}>✏️ Editar lista</Btn>
         </div>
-        {lista.length===0 && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhuma vantagem encontrada.</div>}
-        {lista.map(v=>{
-          const o = getOfficer(v.policialId);
-          return (
-            <Card key={v.id} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:8,opacity:verConcluidas?0.8:1}}>
-              {o&&<Avatar name={o.nome} size={32}/>}
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:13}}>{o?o.nome.toUpperCase():"—"}</div>
-                <div style={{fontSize:11,color:"#6b7280"}}>{o?.grau} · Mat. {cleanMat(o?.matricula)}</div>
-                <div style={{marginTop:4}}>
-                  <Badge color={verConcluidas?"#f3f4f6":"#dbeafe"} textColor={verConcluidas?"#374151":"#1d4ed8"}>
-                    {v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}
-                  </Badge>
-                </div>
-                <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>
-                  {fmtDate(v.dataInicio)}{v.dataFim?` → ${fmtDate(v.dataFim)}`:""} {v.bio&&`· ${v.bio}`}
-                </div>
-              </div>
-              <div style={{display:"flex",gap:4}}>
-                <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
-                {!verConcluidas && <Btn small variant="warning" onClick={()=>setConfirm({msg:"Concluir esta vantagem?",action:()=>concluirVant(v)})}>⏹</Btn>}
-                <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir?",action:()=>excluirVant(v.id)})}>🗑</Btn>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{background:"#f8faff",borderBottom:"2px solid #e5e7eb"}}>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>G.H.</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Nome</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Matrícula</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Início</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>BGO</th>
+                <th style={{padding:"6px 10px",textAlign:"center",color:"#374151"}}>MASF</th>
+                <th style={{padding:"6px 10px",textAlign:"center",color:"#374151"}}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {policiais.map(({v,o},i)=>(
+                <tr key={v.id} style={{background:i%2===0?"#fff":"#f9fafb",borderBottom:"1px solid #f0f0f0"}}>
+                  <td style={{padding:"6px 10px"}}>{o.grau}</td>
+                  <td style={{padding:"6px 10px",fontWeight:500}}>{o.nomeGuerra||o.nome}</td>
+                  <td style={{padding:"6px 10px",color:"#6b7280"}}>{cleanMat(o.matricula)}</td>
+                  <td style={{padding:"6px 10px",color:"#6b7280"}}>{fmtDate(v.dataInicio)}</td>
+                  <td style={{padding:"6px 10px",color:"#6b7280"}}>{v.bio||"—"}</td>
+                  <td style={{padding:"6px 10px",textAlign:"center"}}>
+                    <button onClick={()=>{setMasfOfficer(o);setMasfData(null);}} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}} title="Gerar MASF">📜</button>
+                  </td>
+                  <td style={{padding:"6px 10px",textAlign:"center"}}>
+                    <button onClick={()=>setConfirm({msg:`Remover ${o.nome} de ${titulo}?`,action:()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))})}
+                      style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:14}}>✕</button>
+                  </td>
+                </tr>
+              ))}
+              {policiais.length===0&&<tr><td colSpan={7} style={{padding:12,textAlign:"center",color:"#9ca3af"}}>Nenhum policial.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     );
   }
 
   return (
     <div>
       {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
-      {ModalVant()}
 
       {/* Modal MASF */}
       {masfOfficer && (
-        <Modal title="Declaração MASF" onClose={()=>{setMasfOfficer(null);}}>
+        <Modal title="Declaração MASF" onClose={()=>setMasfOfficer(null)}>
           <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginBottom:12,fontSize:13}}>
             <strong>{masfOfficer.grau} {masfOfficer.nome}</strong>
           </div>
           <Input label="Data da declaração" type="date" value={masfData||hoje} onChange={e=>setMasfData(e.target.value)}/>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
             <Btn variant="secondary" onClick={()=>setMasfOfficer(null)}>Cancelar</Btn>
-            <Btn onClick={()=>{
-              const html = gerarMASF(masfOfficer, masfData);
-              const w = window.open("","_blank");
-              if (w) { w.document.open(); w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MASF</title></head><body>${html}</body></html>`); w.document.close(); setTimeout(()=>w.print(),600); }
-              setMasfOfficer(null);
-            }}>🖨️ Gerar MASF</Btn>
+            <Btn onClick={()=>{gerarMASF(masfOfficer);setMasfOfficer(null);}}>🖨️ Gerar</Btn>
           </div>
         </Modal>
       )}
 
+      {/* Modal editar lista em massa */}
+      {modalEditar && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:700,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15}}>✏️ Editar — {modalEditar.titulo}</span>
+              <button onClick={()=>setModalEditar(null)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕</button>
+            </div>
+            <div style={{padding:20}}>
+              {/* Adicionar policial */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Adicionar policial</div>
+                <BuscaPolicial officers={officers}
+                  excluirIds={modalEditar.lista.map(v=>v.policialId).filter(Boolean)}
+                  onSelect={o=>{
+                    // Find a template from existing vantagem to copy categoria/tipo
+                    const tmpl = modalEditar.lista[0]||{};
+                    const nova = {...tmpl, id:Date.now(), policialId:o.id, dataInicio:"", bio:""};
+                    setVantagens(vs=>[...vs, nova]);
+                    setModalEditar(me=>({...me, lista:[...me.lista, nova]}));
+                  }}/>
+              </div>
+              {/* Editar campos de cada policial */}
+              <div style={{maxHeight:"50vh",overflowY:"auto"}}>
+                <input value={buscaEdicao} onChange={e=>setBuscaEdicao(e.target.value)} placeholder="🔍 Filtrar por nome..."
+                  style={{width:"100%",padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+                {modalEditar.lista
+                  .map(v=>({v, o:getOfficer(v.policialId)}))
+                  .filter(({o})=>o&&(buscaEdicao.trim()?o.nome.toLowerCase().includes(buscaEdicao.toLowerCase()):true))
+                  .sort((a,b)=>rankSort(a.o,b.o))
+                  .map(({v,o})=>(
+                    <div key={v.id} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f0f0f0"}}>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:500}}>{o.nome.toUpperCase()}</div>
+                        <div style={{fontSize:11,color:"#6b7280"}}>{o.grau}</div>
+                      </div>
+                      <input type="date" defaultValue={v.dataInicio||""} onChange={e=>{
+                        setVantagens(vs=>vs.map(x=>x.id===v.id?{...x,dataInicio:e.target.value}:x));
+                      }} style={{padding:"5px 7px",border:"1px solid #d1d5db",borderRadius:6,fontSize:11,outline:"none"}}/>
+                      <input defaultValue={v.bio||""} placeholder="BGO..." onChange={e=>{
+                        setVantagens(vs=>vs.map(x=>x.id===v.id?{...x,bio:e.target.value}:x));
+                      }} style={{padding:"5px 7px",border:"1px solid #d1d5db",borderRadius:6,fontSize:11,outline:"none"}}/>
+                      <button onClick={()=>{setVantagens(vs=>vs.filter(x=>x.id!==v.id));setModalEditar(me=>({...me,lista:me.lista.filter(x=>x.id!==v.id)}));}}
+                        style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:15}}>✕</button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <div style={{padding:"12px 20px",borderTop:"1px solid #e5e7eb",display:"flex",justifyContent:"flex-end",background:"#f9fafb"}}>
+              <Btn onClick={()=>setModalEditar(null)}>✓ Fechar</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Alerta CNH */}
       {(()=>{
-        const d60 = new Date(); d60.setDate(d60.getDate()+60);
-        const d60str = d60.toISOString().slice(0,10);
-        const cetIds = new Set(vantAtivas.filter(v=>v.categoria==="cet").map(v=>v.policialId));
-        const alerta = officers.filter(o=>cetIds.has(o.id)&&o.validCnh&&o.validCnh<=d60str).sort((a,b)=>a.validCnh.localeCompare(b.validCnh));
-        if (!alerta.length) return null;
-        const todayStr = new Date().toISOString().slice(0,10);
+        const d60=new Date();d60.setDate(d60.getDate()+60);const d60str=d60.toISOString().slice(0,10);
+        const cetIds=new Set(vantAtivas.filter(v=>v.categoria==="cet").map(v=>v.policialId));
+        const alerta=officers.filter(o=>cetIds.has(o.id)&&o.validCnh&&o.validCnh<=d60str).sort((a,b)=>a.validCnh.localeCompare(b.validCnh));
+        if(!alerta.length)return null;
         return <AlertaBanner cor="#fee2e2" borda="#fca5a5" icone="🚗"
           titulo={`${alerta.length} policial(is) com CET têm CNH vencida ou vencendo em 60 dias`}
           linhas={alerta.map(o=>{const diff=Math.ceil((new Date(o.validCnh+"T12:00:00")-new Date())/(24*3600*1000));return `${o.grau} ${o.nome} — ${diff<=0?"⛔ VENCIDA":"vence em "+diff+" dias"} (${fmtDate(o.validCnh)})`;}) }
@@ -4115,20 +4007,42 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
       })()}
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div>
-          <h2 style={{fontSize:18,fontWeight:700,color:"#111827",margin:0}}>Vantagens</h2>
-          <p style={{fontSize:12,color:"#6b7280",margin:"3px 0 0"}}>CET e Substituições por policial</p>
-        </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
-            <button onClick={()=>setAba("busca")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="busca"?600:400,background:aba==="busca"?"#1e3a5f":"transparent",color:aba==="busca"?"#fff":"#374151"}}>👤 Por policial</button>
-            <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Lista geral</button>
-          </div>
+        <h2 style={{fontSize:18,fontWeight:700,color:"#111827",margin:0}}>Vantagens</h2>
+        <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
+          <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Listas</button>
+          <button onClick={()=>setAba("historico")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="historico"?600:400,background:aba==="historico"?"#374151":"transparent",color:aba==="historico"?"#fff":"#374151"}}>🗂 Histórico</button>
         </div>
       </div>
 
-      {aba==="busca" && AbaBusca()}
-      {aba==="lista" && AbaLista()}
+      {aba==="lista" && (
+        <div>
+          <TabelaVant lista={cetOp}  titulo="CET Operacional"   cor="#dbeafe" corText="#1d4ed8"/>
+          <TabelaVant lista={cet4}   titulo="CET 4 Rodas (85%)" cor="#d1fae5" corText="#065f46"/>
+          <TabelaVant lista={cet2}   titulo="CET 2 Rodas (105%)"cor="#fef3c7" corText="#92400e"/>
+          <TabelaVant lista={substs} titulo="Substituição de Função" cor="#ede9fe" corText="#5b21b6"/>
+        </div>
+      )}
+
+      {aba==="historico" && (
+        <Card>
+          <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:10}}>Vantagens encerradas</div>
+          {vantConcluidas.length===0&&<p style={{color:"#9ca3af",fontSize:13,textAlign:"center"}}>Nenhuma vantagem encerrada.</p>}
+          {[...vantConcluidas].sort((a,b)=>(b.dataFim||"").localeCompare(a.dataFim||"")).map(v=>{
+            const o=getOfficer(v.policialId);
+            return (
+              <div key={v.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f0f0f0",opacity:0.8}}>
+                {o&&<Avatar name={o.nome} size={28}/>}
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:500}}>{o?o.nome.toUpperCase():"—"}</div>
+                  <div style={{fontSize:11,color:"#6b7280"}}>{o?.grau} · {v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}</div>
+                  <div style={{fontSize:11,color:"#9ca3af"}}>{fmtDate(v.dataInicio)} → {fmtDate(v.dataFim)}</div>
+                </div>
+                <Btn small variant="danger" onClick={()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))}>🗑</Btn>
+              </div>
+            );
+          })}
+        </Card>
+      )}
     </div>
   );
 }
