@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { db, KEY_MAP, isConfigured } from './supabase.js'
+import { supabase, KEY_MAP, isConfigured } from './supabase.js'
 
 // Cache global em memória
 const memCache = {}
@@ -9,17 +9,13 @@ export function useSupabaseState(localKey, initialValue) {
   const mapping = KEY_MAP[localKey]
 
   const [data, setData] = useState(() => {
-    // Se já em cache, usa direto
     if (memCache[localKey] !== undefined) return memCache[localKey]
-    // Se Supabase configurado, não usa localStorage (espera o fetch)
-    if (isConfigured && mapping) {
-      return typeof initialValue === 'function' ? initialValue() : initialValue
+    if (!isConfigured || !mapping) {
+      try {
+        const s = localStorage.getItem(localKey)
+        if (s) return JSON.parse(s)
+      } catch {}
     }
-    // Sem Supabase: usa localStorage
-    try {
-      const stored = localStorage.getItem(localKey)
-      if (stored) return JSON.parse(stored)
-    } catch {}
     return typeof initialValue === 'function' ? initialValue() : initialValue
   })
 
@@ -27,27 +23,49 @@ export function useSupabaseState(localKey, initialValue) {
   const isMounted = useRef(true)
   useEffect(() => { isMounted.current = true; return () => { isMounted.current = false } }, [])
 
-  // Fetch do Supabase na inicialização
+  // Fetch inicial + Realtime subscription
   useEffect(() => {
     if (!isConfigured || !mapping) { setLoading(false); return }
-    if (memCache[localKey] !== undefined) {
+
+    // Fetch inicial
+    if (memCache[localKey] === undefined) {
+      if (!loadingPromises[localKey]) {
+        loadingPromises[localKey] = fetchData(localKey, mapping)
+          .then(result => { memCache[localKey] = result; return result })
+          .catch(err => {
+            console.error(`[SiRH77] Erro ao carregar ${localKey}:`, err)
+            const fallback = typeof initialValue === 'function' ? initialValue() : initialValue
+            memCache[localKey] = fallback
+            return fallback
+          })
+      }
+      loadingPromises[localKey].then(result => {
+        if (isMounted.current) { setData(result); setLoading(false) }
+      })
+    } else {
       setData(memCache[localKey])
       setLoading(false)
-      return
     }
-    if (!loadingPromises[localKey]) {
-      loadingPromises[localKey] = fetchFromSupabase(localKey, mapping)
-        .then(result => { memCache[localKey] = result; return result })
-        .catch(err => {
-          console.error(`[SiRH77] Erro ao carregar ${localKey}:`, err)
-          const fallback = typeof initialValue === 'function' ? initialValue() : initialValue
-          memCache[localKey] = fallback
-          return fallback
-        })
-    }
-    loadingPromises[localKey].then(result => {
-      if (isMounted.current) { setData(result); setLoading(false) }
-    })
+
+    // Realtime: escuta mudanças no banco e atualiza automaticamente
+    if (mapping.type === 'config' || mapping.type === 'list') return
+
+    const channel = supabase
+      .channel(`realtime-${localKey}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: mapping.table },
+        async () => {
+          // Recarrega os dados quando houver mudança
+          delete memCache[localKey]
+          delete loadingPromises[localKey]
+          const result = await fetchData(localKey, mapping)
+          memCache[localKey] = result
+          if (isMounted.current) setData(result)
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [localKey])
 
   // Setter que sincroniza com Supabase
@@ -55,11 +73,9 @@ export function useSupabaseState(localKey, initialValue) {
     setData(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater
       memCache[localKey] = next
-      // Backup no localStorage
       try { localStorage.setItem(localKey, JSON.stringify(next)) } catch {}
-      // Sync Supabase
       if (isConfigured && mapping) {
-        syncToSupabase(localKey, mapping, prev, next).catch(err =>
+        syncData(localKey, mapping, prev, next).catch(err =>
           console.error(`[SiRH77] Erro ao salvar ${localKey}:`, err)
         )
       }
@@ -71,60 +87,71 @@ export function useSupabaseState(localKey, initialValue) {
 }
 
 // ─── Fetch ────────────────────────────────────────────────────────────────────
-async function fetchFromSupabase(localKey, mapping) {
+async function fetchData(localKey, mapping) {
+  if (!supabase) return null
+
   if (mapping.type === 'config') {
-    const val = await db.loadConfig(mapping.key)
-    return val !== null ? val : null
+    const { data } = await supabase.from('config').select('value').eq('key', mapping.key).single()
+    return data?.value ?? null
   }
+
   if (mapping.type === 'list') {
-    const rows = await db.loadAll(mapping.table)
-    return (rows || []).map(r => r.name || r.data?.name).filter(Boolean)
+    const { data } = await supabase.from(mapping.table).select('*')
+    return (data || []).map(r => r.name || r.data?.name).filter(Boolean)
   }
-  const rows = await db.loadAll(mapping.table)
-  return (rows || []).map(r => ({ ...r.data, id: r.id }))
+
+  const { data, error } = await supabase.from(mapping.table).select('*')
+  if (error) throw error
+  return (data || []).map(r => ({ ...r.data, id: r.id }))
 }
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
-async function syncToSupabase(localKey, mapping, prev, next) {
+async function syncData(localKey, mapping, prev, next) {
+  if (!supabase) return
+
   if (mapping.type === 'config') {
-    await db.saveConfig(mapping.key, next); return
+    await supabase.from('config').upsert({ key: mapping.key, value: next })
+    return
   }
+
   if (mapping.type === 'list') {
     const prevSet = new Set(Array.isArray(prev) ? prev : [])
     const nextSet = new Set(Array.isArray(next) ? next : [])
-    for (const name of [...nextSet].filter(x => !prevSet.has(x))) {
-      await db.req(`/${mapping.table}`, {
-        method: 'POST',
-        headers: { 'Prefer': 'return=representation,resolution=merge-duplicates' },
-        body: JSON.stringify({ name }),
-      }).catch(() => {})
+    const added = [...nextSet].filter(x => !prevSet.has(x))
+    const removed = [...prevSet].filter(x => !nextSet.has(x))
+    for (const name of added) {
+      await supabase.from(mapping.table).upsert({ name })
     }
-    for (const name of [...prevSet].filter(x => !nextSet.has(x))) {
-      const rows = await db.req(`/${mapping.table}?name=eq.${encodeURIComponent(name)}&select=id`)
-      if (rows?.[0]?.id) await db.delete(mapping.table, rows[0].id)
+    for (const name of removed) {
+      await supabase.from(mapping.table).delete().eq('name', name)
     }
     return
   }
-  // Array: upsert changed/new, delete removed
+
+  // Array
   const prevMap = {}
   if (Array.isArray(prev)) prev.forEach(item => { if (item?.id) prevMap[item.id] = item })
   const nextMap = {}
   if (Array.isArray(next)) next.forEach(item => { if (item?.id) nextMap[item.id] = item })
 
+  // Upsert novos/alterados
   for (const [id, item] of Object.entries(nextMap)) {
     const prevItem = prevMap[id]
     if (!prevItem || JSON.stringify(prevItem) !== JSON.stringify(item)) {
       const { id: itemId, ...rest } = item
-      try {
-        await db.upsert(mapping.table, { id: Number(itemId), data: rest })
-        console.log(`[SiRH77] Saved ${mapping.table} id=${itemId}`)
-      } catch(err) {
-        console.error(`[SiRH77] Failed to save ${mapping.table} id=${itemId}:`, err)
-      }
+      const { error } = await supabase.from(mapping.table).upsert({
+        id: Number(itemId),
+        data: rest
+      })
+      if (error) console.error(`[SiRH77] Upsert error ${mapping.table}:`, error)
     }
   }
+
+  // Deletar removidos
   for (const id of Object.keys(prevMap)) {
-    if (!nextMap[id]) await db.delete(mapping.table, Number(id))
+    if (!nextMap[id]) {
+      await supabase.from(mapping.table).delete().eq('id', Number(id))
+    }
   }
 }
 
@@ -133,7 +160,9 @@ export function useGlobalLoading(keys) {
   useEffect(() => {
     const check = () => keys.every(k => memCache[k] !== undefined)
     if (check()) { setAllLoaded(true); return }
-    const interval = setInterval(() => { if (check()) { setAllLoaded(true); clearInterval(interval) } }, 200)
+    const interval = setInterval(() => {
+      if (check()) { setAllLoaded(true); clearInterval(interval) }
+    }, 200)
     return () => clearInterval(interval)
   }, [])
   return allLoaded

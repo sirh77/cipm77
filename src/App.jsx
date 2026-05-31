@@ -4413,7 +4413,9 @@ function ModExportar({ officers }) {
 }
 
 export default function App() {
-  const [loggedUser, setLoggedUser] = useState(null);
+  const [loggedUser, setLoggedUser] = useState(()=>{
+    try { const s=sessionStorage.getItem("sirh77_session"); return s?JSON.parse(s):null; } catch { return null; }
+  });
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -4472,11 +4474,18 @@ export default function App() {
 
   if (!loggedUser) return <LoginScreen onLogin={u=>{
     if (u.primeiroAcesso) setLoggedUser({...u,_needsChange:true});
-    else setLoggedUser(u);
+    else { 
+      setLoggedUser(u);
+      try { sessionStorage.setItem("sirh77_session", JSON.stringify(u)); } catch {}
+    }
   }}/>;
 
   if (loggedUser._needsChange) return (
-    <TrocarSenha user={loggedUser} onDone={u=>setLoggedUser({...u, _needsChange:false})} users={users} setUsers={setUsers}/>
+    <TrocarSenha user={loggedUser} onDone={u=>{
+      const updated = {...u, _needsChange:false};
+      setLoggedUser(updated);
+      try { sessionStorage.setItem("sirh77_session", JSON.stringify(updated)); } catch {}
+    }} users={users} setUsers={setUsers}/>
   );
 
   const perm = PERMS[loggedUser.perfil]||PERMS.SSO;
@@ -4519,7 +4528,7 @@ export default function App() {
           <div title={notifs.join("\n")} style={{background:"#dc2626",color:"#fff",borderRadius:999,fontSize:11,fontWeight:700,padding:"2px 8px",marginRight:8,cursor:"help"}}>{notifs.length} ⚠️</div>
         )}
         <div style={{background:"rgba(255,255,255,0.15)",borderRadius:999,padding:"4px 10px",fontSize:11,color:"rgba(255,255,255,0.9)",cursor:"pointer",whiteSpace:"nowrap"}}
-          onClick={()=>setLoggedUser(null)}>{loggedUser.nome.split(" ")[0]} · Sair</div>
+          onClick={()=>{setLoggedUser(null);try{sessionStorage.removeItem("sirh77_session");}catch{}}}>{loggedUser.nome.split(" ")[0]} · Sair</div>
       </nav>
 
       <div style={{padding:"20px",maxWidth:1100,margin:"0 auto"}}>
