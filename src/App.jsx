@@ -3572,10 +3572,10 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
           </button>
         ))}
       </div>
-      {aba==="processos"   && <AbaProcessos/>}
-      {aba==="elogios"     && <AbaElogios/>}
-      {aba==="milae"       && <AbaMilae/>}
-      {aba==="expedientes" && <AbaExpedientes/>}
+      {aba==="processos"   && AbaProcessos()}
+      {aba==="elogios"     && AbaElogios()}
+      {aba==="milae"       && AbaMilae()}
+      {aba==="expedientes" && AbaExpedientes()}
     </div>
   );
 }
