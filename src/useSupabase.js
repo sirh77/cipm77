@@ -115,7 +115,12 @@ async function syncToSupabase(localKey, mapping, prev, next) {
     const prevItem = prevMap[id]
     if (!prevItem || JSON.stringify(prevItem) !== JSON.stringify(item)) {
       const { id: itemId, ...rest } = item
-      await db.upsert(mapping.table, { id: Number(itemId), data: rest })
+      try {
+        await db.upsert(mapping.table, { id: Number(itemId), data: rest })
+        console.log(`[SiRH77] Saved ${mapping.table} id=${itemId}`)
+      } catch(err) {
+        console.error(`[SiRH77] Failed to save ${mapping.table} id=${itemId}:`, err)
+      }
     }
   }
   for (const id of Object.keys(prevMap)) {

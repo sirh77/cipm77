@@ -28,15 +28,16 @@ class SupabaseClient {
   }
 
   async req(path, options = {}) {
+    const { prefer, headers: extraHeaders, ...fetchOptions } = options
     const res = await fetch(`${this.url}/rest/v1${path}`, {
+      ...fetchOptions,
       headers: {
         'apikey': this.key,
         'Authorization': `Bearer ${this.key}`,
         'Content-Type': 'application/json',
-        'Prefer': options.prefer || 'return=representation',
-        ...options.headers,
+        'Prefer': prefer || 'return=representation',
+        ...(extraHeaders || {}),
       },
-      ...options,
     })
     if (!res.ok) {
       const err = await res.text()
