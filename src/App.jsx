@@ -373,7 +373,7 @@ function AlertaBanner({ cor, borda, icone, titulo, linhas, chaveStorage, loggedU
   );
 }
 
-function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoSaude, onGoEfetivo, loggedUser }) {
+function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoSaude, onGoEfetivo, loggedUser, locations }) {
   // Só conta efetivo ativo (não transferido/reserva)
   const ativos = officers.filter(o=>o.situacao!=="Transferido"&&o.situacao!=="Reserva/Inativo");
   const total = ativos.length;
@@ -519,6 +519,12 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
     {label:"Feminino",            value:fem,                     color:"#7e3af2", bg:"#ede9fe", filter:{type:"sexo",value:"FEM"}},
   ];
 
+  // Cards dinâmicos por local de trabalho (apenas locais cadastrados)
+  const locationCards = (locations||[]).map(loc => {
+    const pols = ativos.filter(o=>(o.localTrabalho||"")===loc);
+    return { label:loc, value:pols.length, color:"#1e3a5f", bg:"#f0f4ff", filter:{type:"ids",ids:pols.map(o=>o.id)} };
+  }).filter(c=>c.value>0);
+
   // ─── Alertas calculados ──────────────────────────────────────────
   const hoje2 = new Date();
 
@@ -596,7 +602,7 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
       )}
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
-        {statCards.map(s=>(
+        {[...statCards, ...locationCards].map(s=>(
           <div key={s.label} onClick={()=>onFilter&&onFilter(s.filter)}
             style={{background:s.bg||"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",cursor:onFilter?"pointer":"default",transition:"transform 0.1s,box-shadow 0.1s"}}
             onMouseEnter={e=>{if(onFilter){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,0.1)";}}}
@@ -1227,7 +1233,7 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
 // GESTÃO DE ANTIGUIDADE (componente top-level)
 // ──────────────────────────────────────────────
 function GerirAntiguidade({ officers, setOfficers }) {
-  const [grauSel, setGrauSel] = React.useState(RANK_ORDER.find(r=>officers.some(o=>o.grau===r))||RANK_ORDER[0]);
+  const [grauSel, setGrauSel] = useState(RANK_ORDER.find(r=>officers.some(o=>o.grau===r))||RANK_ORDER[0]);
   const polsGrau = [...officers.filter(o=>o.grau===grauSel&&!SITUACOES_INATIVO.includes(o.situacao||"Ativo"))]
     .sort((a,b)=>(a.antiguidade??9999)-(b.antiguidade??9999));
   return (
@@ -1402,9 +1408,6 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
             {sortByAnt?"↕ Antiguidade ✓":"↕ Antiguidade"}
           </button>
           <button onClick={()=>setGerirAnt(true)} style={{padding:"7px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,cursor:"pointer",background:"#fff",color:"#374151"}}>📋 Gerir Antiguidade</button>
-          <button onClick={()=>setGerirAnt(true)} style={{padding:"7px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,cursor:"pointer",background:"#fff",color:"#374151"}}>
-            📋 Gerir Antiguidade
-          </button>
           {(perm.editarTudo||perm.efetivo) && <Btn onClick={()=>setAdding(true)}>+ Novo policial</Btn>}
         </div>
       </div>
@@ -3817,461 +3820,298 @@ const SUBST_MAPA = {
 };
 
 function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
-  const [aba, setAba] = useState("lista"); // "lista" | "novo" | "detalhe" | "masf"
+  const [aba, setAba] = useState("busca");
+  const [verConcluidas, setVerConcluidas] = useState(false);
   const [masfModal, setMasfModal] = useState(false);
   const [masfOfficer, setMasfOfficer] = useState(null);
   const [masfData, setMasfData] = useState(null);
-  const [subAba, setSubAba] = useState("cet"); // "cet" | "subst"
-  const [selectedOfficer, setSelectedOfficer] = useState(null);
-  const [modalTipo, setModalTipo] = useState(null); // "cet" | "subst"
-  const [formCet, setFormCet] = useState({tipo:"4 Rodas", dataInicio:"", bio:"", dataFim:"", bioFim:""});
-  const [formSubst, setFormSubst] = useState({grauSubst:"", dataInicio:"", bio:"", dataFim:"", bioFim:""});
-  const [editItem, setEditItem] = useState(null);
+  const [modalVant, setModalVant] = useState(null); // {mode:"new"|"edit", vant, officer}
+  const [formVant, setFormVant] = useState({});
+  const fv = (k,v) => setFormVant(f=>({...f,[k]:v}));
   const [confirm, setConfirm] = useState(null);
-  const [filtroLista, setFiltroLista] = useState("todos"); // grau filter for lista
+  const [selectedOfficer, setSelectedOfficer] = useState(null);
+  const [fGrau, setFGrau] = useState("todos");
+  const [fTipo, setFTipo] = useState("todos");
 
   const getOfficer = id => officers.find(o=>o.id===Number(id));
+  const hoje = new Date().toISOString().slice(0,10);
 
-  // Get vantagens of a policial
-  const getVants = (policialId, tipo) => (vantagens||[]).filter(v=>v.policialId===policialId && v.categoria===tipo);
+  // Vantagens ativas = sem dataFim ou dataFim >= hoje
+  const vantAtivas    = (vantagens||[]).filter(v=>!v.dataFim||v.dataFim>=hoje);
+  const vantConcluidas= (vantagens||[]).filter(v=>v.dataFim&&v.dataFim<hoje);
+  const listaAtual    = verConcluidas ? vantConcluidas : vantAtivas;
 
-  function addCet(officer) {
-    if (!formCet.dataInicio || !formCet.bio) { alert("Preencha data de início e BIO."); return; }
-    const newV = {
-      id: Date.now(),
-      policialId: officer.id,
-      categoria: "cet",
-      tipo: formCet.tipo,
-      dataInicio: formCet.dataInicio,
-      bio: formCet.bio,
-      dataFim: formCet.dataFim || "",
-      bioFim: formCet.bioFim || "",
-    };
-    if (editItem) {
-      setVantagens(vs=>vs.map(v=>v.id===editItem.id?{...v,...newV,id:editItem.id}:v));
-      setEditItem(null);
+  function saveVant() {
+    if (!formVant.policialId) { alert("Selecione um policial."); return; }
+    if (!formVant.categoria)  { alert("Selecione a categoria."); return; }
+    if (modalVant?.mode==="edit") {
+      setVantagens(vs=>vs.map(v=>v.id===formVant.id?{...formVant}:v));
     } else {
-      setVantagens(vs=>[...vs, newV]);
+      setVantagens(vs=>[...vs, {...formVant, id:Date.now(), policialId:Number(formVant.policialId)}]);
     }
-    setFormCet({tipo:"4 Rodas", dataInicio:"", bio:"", dataFim:"", bioFim:""});
-    setModalTipo(null);
+    setModalVant(null);
   }
 
-  function addSubst(officer) {
-    if (!formSubst.grauSubst || !formSubst.dataInicio || !formSubst.bio) { alert("Preencha grau, data e BIO."); return; }
-    const newV = {
-      id: Date.now(),
-      policialId: officer.id,
-      categoria: "subst",
-      grauSubst: formSubst.grauSubst,
-      dataInicio: formSubst.dataInicio,
-      bio: formSubst.bio,
-      dataFim: formSubst.dataFim || "",
-      bioFim: formSubst.bioFim || "",
-    };
-    if (editItem) {
-      setVantagens(vs=>vs.map(v=>v.id===editItem.id?{...v,...newV,id:editItem.id}:v));
-      setEditItem(null);
-    } else {
-      setVantagens(vs=>[...vs, newV]);
-    }
-    setFormSubst({grauSubst:"", dataInicio:"", bio:"", dataFim:"", bioFim:""});
-    setModalTipo(null);
+  function abrirNova(officer) {
+    setFormVant({policialId:officer.id, categoria:"cet", tipo:"Operacional", dataInicio:"", bio:"", dataFim:"", bioFim:""});
+    setModalVant({mode:"new", officer});
   }
 
-  function fmtBio(bio) {
-    if (!bio) return "";
-    // Format as "BIO Nº 001 DE 2026" — just display as-is, user types it
-    return bio;
+  function abrirEditar(vant) {
+    const o = getOfficer(vant.policialId);
+    setFormVant({...vant});
+    setModalVant({mode:"edit", officer:o});
   }
 
-  // ── Lista consolidada ──────────────────────────────────────────────────────
-  // For CET list: group by tipo (Operacional, 4 Rodas, 2 Rodas), sorted by rank then alpha
-  // For Substituição: sorted by rank then alpha
-  function buildListaCet(tipo) {
-    const ativos = (vantagens||[]).filter(v=>v.categoria==="cet" && v.tipo===tipo && !v.dataFim);
-    return ativos
-      .map(v=>({v, o:getOfficer(v.policialId)}))
-      .filter(x=>x.o)
-      .sort((a,b)=>rankSort(a.o,b.o)||a.o.nome.localeCompare(b.o.nome));
+  function concluirVant(vant) {
+    setVantagens(vs=>vs.map(v=>v.id===vant.id?{...v, dataFim:hoje}:v));
   }
 
-  function buildListaSubst() {
-    const ativos = (vantagens||[]).filter(v=>v.categoria==="subst" && !v.dataFim);
-    return ativos
-      .map(v=>({v, o:getOfficer(v.policialId)}))
-      .filter(x=>x.o)
-      .sort((a,b)=>rankSort(a.o,b.o)||a.o.nome.localeCompare(b.o.nome));
+  function excluirVant(id) {
+    setVantagens(vs=>vs.filter(v=>v.id!==id));
   }
 
-  // ── Perfil individual ─────────────────────────────────────────────────────
-  function DetalhePolicial({officer}) {
-    const cets = getVants(officer.id, "cet").sort((a,b)=>b.dataInicio.localeCompare(a.dataInicio));
-    const substs = getVants(officer.id, "subst").sort((a,b)=>b.dataInicio.localeCompare(a.dataInicio));
-    const grausSubst = SUBST_MAPA[officer.grau] || [];
-
+  // Modal formulário de vantagem
+  function ModalVant() {
+    if (!modalVant) return null;
+    const isCet   = formVant.categoria==="cet";
+    const isSubst = formVant.categoria==="subst";
+    const isMasf  = formVant.categoria==="masf";
+    const o = modalVant.officer;
     return (
-      <div>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
-          <Avatar name={officer.nome} size={42}/>
-          <div>
-            <div style={{fontWeight:700,fontSize:15}}>{officer.nome}</div>
-            <div style={{fontSize:12,color:"#6b7280"}}>{officer.grau} · Mat. {officer.matricula}</div>
-          </div>
-        </div>
-
-        {/* CET */}
-        <div style={{marginBottom:20}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontWeight:600,fontSize:14,color:"#1e3a5f"}}>🚗 CET</div>
-            <Btn small onClick={()=>{setFormCet({tipo:"4 Rodas",dataInicio:"",bio:"",dataFim:"",bioFim:""});setEditItem(null);setModalTipo("cet");}}>+ Adicionar</Btn>
-          </div>
-          {cets.length===0 && <p style={{fontSize:12,color:"#9ca3af"}}>Nenhum CET registrado.</p>}
-          {cets.map(v=>(
-            <div key={v.id} style={{border:`1px solid ${v.dataFim?"#e5e7eb":"#bfdbfe"}`,borderRadius:8,padding:"10px 12px",marginBottom:8,background:v.dataFim?"#f9fafb":"#eff6ff"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                <div>
-                  <Badge color={v.tipo==="4 Rodas"?"#dbeafe":v.tipo==="2 Rodas"?"#d1fae5":"#fef3c7"}
-                    textColor={v.tipo==="4 Rodas"?"#1d4ed8":v.tipo==="2 Rodas"?"#065f46":"#92400e"}>
-                    {v.tipo}
-                  </Badge>
-                  {v.dataFim && <Badge color="#f3f4f6" textColor="#374151" size={10} style={{marginLeft:4}}>Encerrado</Badge>}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  <Btn small variant="secondary" onClick={()=>{
-                    setFormCet({tipo:v.tipo,dataInicio:v.dataInicio,bio:v.bio,dataFim:v.dataFim||"",bioFim:v.bioFim||""});
-                    setEditItem(v); setModalTipo("cet");
-                  }}>✏️</Btn>
-                  <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir este registro?",action:()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))})}>🗑</Btn>
-                </div>
-              </div>
-              <div style={{fontSize:12,color:"#374151",marginTop:6}}>
-                <strong>Início:</strong> {fmtDate(v.dataInicio)} · <span style={{fontStyle:"italic"}}>{fmtBio(v.bio)}</span>
-              </div>
-              {v.dataFim && <div style={{fontSize:12,color:"#6b7280"}}>
-                <strong>Fim:</strong> {fmtDate(v.dataFim)} · <span style={{fontStyle:"italic"}}>{fmtBio(v.bioFim)}</span>
-              </div>}
-            </div>
-          ))}
-        </div>
-
-        {/* Substituição */}
-        <div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontWeight:600,fontSize:14,color:"#1e3a5f"}}>⭐ Substituição</div>
-            {grausSubst.length>0
-              ? <Btn small onClick={()=>{setFormSubst({grauSubst:grausSubst[0],dataInicio:"",bio:"",dataFim:"",bioFim:""});setEditItem(null);setModalTipo("subst");}}>+ Adicionar</Btn>
-              : <span style={{fontSize:11,color:"#9ca3af"}}>Grau não previsto</span>}
-          </div>
-          {substs.length===0 && <p style={{fontSize:12,color:"#9ca3af"}}>Nenhuma substituição registrada.</p>}
-          {substs.map(v=>(
-            <div key={v.id} style={{border:`1px solid ${v.dataFim?"#e5e7eb":"#bbf7d0"}`,borderRadius:8,padding:"10px 12px",marginBottom:8,background:v.dataFim?"#f9fafb":"#f0fdf4"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                <div>
-                  <Badge color="#dcfce7" textColor="#15803d">Subst. de {v.grauSubst}</Badge>
-                  {v.dataFim && <Badge color="#f3f4f6" textColor="#374151" size={10}>Encerrado</Badge>}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  <Btn small variant="secondary" onClick={()=>{
-                    setFormSubst({grauSubst:v.grauSubst,dataInicio:v.dataInicio,bio:v.bio,dataFim:v.dataFim||"",bioFim:v.bioFim||""});
-                    setEditItem(v); setModalTipo("subst");
-                  }}>✏️</Btn>
-                  <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir este registro?",action:()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))})}>🗑</Btn>
-                </div>
-              </div>
-              <div style={{fontSize:12,color:"#374151",marginTop:6}}>
-                <strong>Início:</strong> {fmtDate(v.dataInicio)} · <span style={{fontStyle:"italic"}}>{fmtBio(v.bio)}</span>
-              </div>
-              {v.dataFim && <div style={{fontSize:12,color:"#6b7280"}}>
-                <strong>Fim:</strong> {fmtDate(v.dataFim)} · <span style={{fontStyle:"italic"}}>{fmtBio(v.bioFim)}</span>
-              </div>}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Modal CET ─────────────────────────────────────────────────────────────
-  function ModalCet({officer}) {
-    return (
-      <Modal title={`${editItem?"Editar":"Novo"} CET — ${officer.nome}`} onClose={()=>{setModalTipo(null);setEditItem(null);}}>
-        <Select label="Tipo de CET" value={formCet.tipo} onChange={e=>setFormCet(f=>({...f,tipo:e.target.value}))}>
-          {["Operacional","4 Rodas","2 Rodas"].map(t=><option key={t} value={t}>{t}</option>)}
-        </Select>
-        {formCet.tipo!=="Operacional" && (
-          <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",fontSize:12,color:"#1e3a5f",marginBottom:12}}>
-            ℹ️ CET de {formCet.tipo} — preencha a data de início e o BIO correspondente.
+      <Modal title={modalVant.mode==="edit"?"Editar vantagem":"Nova vantagem"} onClose={()=>setModalVant(null)}>
+        {o && (
+          <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginBottom:12,fontSize:13}}>
+            <strong>{o.grau} {o.nome}</strong> — Mat. {cleanMat(o.matricula)}
           </div>
         )}
-        <Input label="Data de início (contar de)" type="date" value={formCet.dataInicio} onChange={e=>setFormCet(f=>({...f,dataInicio:e.target.value}))}/>
-        <Input label='BIO de início (ex: "BIO Nº 001 DE 2026")' value={formCet.bio} onChange={e=>setFormCet(f=>({...f,bio:e.target.value}))} placeholder="BIO Nº 001 DE 2026"/>
-        <div style={{borderTop:"1px solid #e5e7eb",marginTop:8,paddingTop:12}}>
-          <div style={{fontSize:12,color:"#6b7280",marginBottom:8}}>Encerramento (preencher quando cessar)</div>
-          <Input label="Data de fim" type="date" value={formCet.dataFim} onChange={e=>setFormCet(f=>({...f,dataFim:e.target.value}))}/>
-          {formCet.dataFim && <Input label='BIO de fim (ex: "BIO Nº 025 DE 2026")' value={formCet.bioFim} onChange={e=>setFormCet(f=>({...f,bioFim:e.target.value}))} placeholder="BIO Nº 025 DE 2026"/>}
+        <Select label="Categoria" value={formVant.categoria||"cet"} onChange={e=>fv("categoria",e.target.value)}>
+          <option value="cet">CET</option>
+          <option value="subst">Substituição de Função</option>
+          <option value="masf">MASF</option>
+        </Select>
+        {isCet && (
+          <Select label="Tipo CET" value={formVant.tipo||"Operacional"} onChange={e=>fv("tipo",e.target.value)}>
+            <option value="Operacional">Operacional</option>
+            <option value="4 Rodas">4 Rodas (85%)</option>
+            <option value="2 Rodas">2 Rodas (105%)</option>
+          </Select>
+        )}
+        {isSubst && (
+          <Select label="Substituição de" value={formVant.grauSubst||""} onChange={e=>fv("grauSubst",e.target.value)}>
+            <option value="">Selecionar...</option>
+            {["ST PM","1º TEN PM","2º TEN PM","CAP PM","1º SGT PM","2º SGT PM","CB PM"].map(g=><option key={g} value={g}>{g}</option>)}
+          </Select>
+        )}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Input label="Data início" type="date" value={formVant.dataInicio||""} onChange={e=>fv("dataInicio",e.target.value)}/>
+          <Input label="BGO de início" value={formVant.bio||""} onChange={e=>fv("bio",e.target.value)} placeholder="BGO Nº 001/2026"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Input label="Data fim (deixe vazio se ativo)" type="date" value={formVant.dataFim||""} onChange={e=>fv("dataFim",e.target.value)}/>
+          <Input label="BGO de encerramento" value={formVant.bioFim||""} onChange={e=>fv("bioFim",e.target.value)} placeholder="BGO Nº 001/2026"/>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-          <Btn variant="secondary" onClick={()=>{setModalTipo(null);setEditItem(null);}}>Cancelar</Btn>
-          <Btn onClick={()=>addCet(officer)}>Salvar</Btn>
+          <Btn variant="secondary" onClick={()=>setModalVant(null)}>Cancelar</Btn>
+          <Btn onClick={saveVant}>Salvar</Btn>
         </div>
       </Modal>
-    );
-  }
-
-  // ── Modal Substituição ────────────────────────────────────────────────────
-  function ModalSubst({officer}) {
-    const grausSubst = SUBST_MAPA[officer.grau] || [];
-    return (
-      <Modal title={`${editItem?"Editar":"Nova"} substituição — ${officer.nome}`} onClose={()=>{setModalTipo(null);setEditItem(null);}}>
-        <Select label="Substitui como (grau)" value={formSubst.grauSubst} onChange={e=>setFormSubst(f=>({...f,grauSubst:e.target.value}))}>
-          {grausSubst.map(g=><option key={g} value={g}>{g}</option>)}
-        </Select>
-        <Input label="Data de início" type="date" value={formSubst.dataInicio} onChange={e=>setFormSubst(f=>({...f,dataInicio:e.target.value}))}/>
-        <Input label='BIO de início (ex: "BIO Nº 001 DE 2026")' value={formSubst.bio} onChange={e=>setFormSubst(f=>({...f,bio:e.target.value}))} placeholder="BIO Nº 001 DE 2026"/>
-        <div style={{borderTop:"1px solid #e5e7eb",marginTop:8,paddingTop:12}}>
-          <div style={{fontSize:12,color:"#6b7280",marginBottom:8}}>Encerramento</div>
-          <Input label="Data de fim" type="date" value={formSubst.dataFim} onChange={e=>setFormSubst(f=>({...f,dataFim:e.target.value}))}/>
-          {formSubst.dataFim && <Input label='BIO de fim' value={formSubst.bioFim} onChange={e=>setFormSubst(f=>({...f,bioFim:e.target.value}))} placeholder="BIO Nº 025 DE 2026"/>}
-        </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-          <Btn variant="secondary" onClick={()=>{setModalTipo(null);setEditItem(null);}}>Cancelar</Btn>
-          <Btn onClick={()=>addSubst(officer)}>Salvar</Btn>
-        </div>
-      </Modal>
-    );
-  }
-
-  // ── LISTAS CONSOLIDADAS ───────────────────────────────────────────────────
-  function ListaVantagens() {
-    return (
-      <div>
-        <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb",marginBottom:16,width:"fit-content"}}>
-          {["cet","subst"].map(s=>(
-            <button key={s} onClick={()=>setSubAba(s)} style={{padding:"8px 18px",border:"none",cursor:"pointer",fontSize:12,fontWeight:subAba===s?600:400,background:subAba===s?"#1e3a5f":"transparent",color:subAba===s?"#fff":"#374151"}}>
-              {s==="cet"?"🚗 CET":"⭐ Substituição"}
-            </button>
-          ))}
-        </div>
-
-        {subAba==="cet" && (
-          <div>
-            {["Operacional","4 Rodas","2 Rodas"].map(tipo=>{
-              const lista = buildListaCet(tipo);
-              return (
-                <div key={tipo} style={{marginBottom:24}}>
-                  <div style={{fontWeight:700,fontSize:14,color:"#1e3a5f",marginBottom:10,background:"#dbeafe",borderRadius:7,padding:"6px 12px",display:"inline-block"}}>{tipo} ({lista.length})</div>
-                  {lista.length===0 ? <p style={{fontSize:12,color:"#9ca3af",marginLeft:4}}>Nenhum policial ativo.</p> : (
-                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                      <thead>
-                        <tr style={{background:"#1e3a5f",color:"#fff"}}>
-                          <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>Grau</th>
-                          <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>Nome</th>
-                          <th style={{padding:"7px 10px",textAlign:"center",border:"1px solid #1e3a5f"}}>Matrícula</th>
-                          <th style={{padding:"7px 10px",textAlign:"center",border:"1px solid #1e3a5f"}}>Início</th>
-                          <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>BIO</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lista.map(({v,o},i)=>(
-                          <tr key={v.id} style={{background:i%2===0?"#fff":"#f9fafb"}}>
-                            <td style={{padding:"6px 10px",border:"1px solid #e5e7eb"}}>{o.grau}</td>
-                            <td style={{padding:"6px 10px",border:"1px solid #e5e7eb"}}>{o.nome}</td>
-                            <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",textAlign:"center"}}>{o.matricula}</td>
-                            <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",textAlign:"center"}}>{fmtDate(v.dataInicio)}</td>
-                            <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",fontStyle:"italic"}}>{v.bio}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {subAba==="subst" && (
-          <div>
-            <div style={{fontWeight:700,fontSize:14,color:"#1e3a5f",marginBottom:10}}>Substituições ativas ({buildListaSubst().length})</div>
-            {buildListaSubst().length===0 ? <p style={{fontSize:12,color:"#9ca3af"}}>Nenhuma substituição ativa.</p> : (
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{background:"#1e3a5f",color:"#fff"}}>
-                    <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>Grau</th>
-                    <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>Nome</th>
-                    <th style={{padding:"7px 10px",textAlign:"center",border:"1px solid #1e3a5f"}}>Matrícula</th>
-                    <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>Subst. de</th>
-                    <th style={{padding:"7px 10px",textAlign:"center",border:"1px solid #1e3a5f"}}>Início</th>
-                    <th style={{padding:"7px 10px",textAlign:"left",border:"1px solid #1e3a5f"}}>BIO</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {buildListaSubst().map(({v,o},i)=>(
-                    <tr key={v.id} style={{background:i%2===0?"#fff":"#f9fafb"}}>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb"}}>{o.grau}</td>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb"}}>{o.nome}</td>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",textAlign:"center"}}>{o.matricula}</td>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb"}}>{v.grauSubst}</td>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",textAlign:"center"}}>{fmtDate(v.dataInicio)}</td>
-                      <td style={{padding:"6px 10px",border:"1px solid #e5e7eb",fontStyle:"italic"}}>{v.bio}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
     );
   }
 
   function gerarMASF(officer, dataEmissao) {
     const agora = dataEmissao ? new Date(dataEmissao+"T12:00:00") : new Date();
     const d = agora.toLocaleDateString("pt-BR");
-    const mes = agora.toLocaleDateString("pt-BR",{month:"long"});
-    const ano = agora.getFullYear();
+    const cets = vantAtivas.filter(v=>v.policialId===officer.id&&v.categoria==="cet");
+    const substs = vantAtivas.filter(v=>v.policialId===officer.id&&v.categoria==="subst");
+    const cetDesc = cets.length>0 ? cets.map(c=>`CET ${c.tipo} (${c.bio||""})`).join(", ") : "CET Operacional";
+    const substDesc = substs.length>0 ? substs.map(s=>`Substituição de ${s.grauSubst} (${s.bio||""})`).join(", ") : null;
     const emitidoPor = loggedUser ? `${loggedUser.grau||""} ${loggedUser.nome}`.trim() : "Sistema";
-
-    // Compute vantagens ativas
-    const cets = (vantagens||[]).filter(v=>v.policialId===officer.id&&v.categoria==="cet"&&!v.dataFim);
-    const substs = (vantagens||[]).filter(v=>v.policialId===officer.id&&v.categoria==="subst"&&!v.dataFim);
-
-    const cetDesc = cets.length>0
-      ? cets.map(c=>`CET ${c.tipo} (${c.bio||""})`).join(", ")
-      : "CET Operacional (BIO padrão)";
-    const substDesc = substs.length>0
-      ? substs.map(s=>`Substituição de ${s.grauSubst} (${s.bio||""})`).join(", ")
-      : null;
-
-    const logoSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100" height="100" style="display:block;margin:0 auto 8px;">
-      <circle cx="60" cy="60" r="58" fill="#1a3a6b" stroke="#d4af37" stroke-width="3"/>
-      <circle cx="60" cy="60" r="48" fill="#8b1a1a" stroke="#d4af37" stroke-width="1.5"/>
-      <text x="60" y="72" text-anchor="middle" fill="#d4af37" font-size="28" font-weight="bold" font-family="Arial">77</text>
-      <path d="M20,35 Q60,10 100,35" fill="none" stroke="#d4af37" stroke-width="1.5"/>
-      <text x="60" y="22" text-anchor="middle" fill="#fff" font-size="7" font-family="Arial" font-weight="bold">POLÍCIA MILITAR DA BAHIA</text>
-      <text x="60" y="100" text-anchor="middle" fill="#fff" font-size="6" font-family="Arial">CIA INDEPENDENTE</text>
-    </svg>`;
-
     const html = `<div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:24px 32px;">
       <div style="text-align:center;margin-bottom:20px;">
-        ${logoSvg}
         <div style="font-weight:bold;font-size:12px;line-height:2.0;text-transform:uppercase;">
-          POLÍCIA MILITAR DA BAHIA<br/>
-          COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>
-          77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR<br/>
-          VITÓRIA DA CONQUISTA - ÁREA LESTE
+          POLÍCIA MILITAR DA BAHIA<br/>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>
+          77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR<br/>VITÓRIA DA CONQUISTA - ÁREA LESTE
         </div>
-        <div style="margin-top:14px;font-size:15px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;">
-          DECLARAÇÃO — MASF
-        </div>
+        <div style="margin-top:14px;font-size:15px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;">DECLARAÇÃO — MASF</div>
       </div>
-
       <p style="font-size:13px;line-height:1.8;text-align:justify;">
-        Declaro, para os devidos fins, que o(a) <strong>${officer.grau} PM ${officer.nome}</strong>,
-        matrícula <strong>${officer.matricula.replace(/[.\-]/g,"")}</strong>,
-        lotado(a) nesta Unidade Policial Militar, recebe atualmente as seguintes vantagens previstas na legislação:
+        Declaro que o(a) <strong>${officer.grau} PM ${officer.nome}</strong>, matrícula <strong>${cleanMat(officer.matricula)}</strong>, lotado(a) nesta Unidade, recebe as seguintes vantagens:
       </p>
-
       <div style="margin:16px 0;padding:12px 16px;border:1px solid #ccc;border-radius:6px;background:#f9f9f9;">
-        <p style="font-size:13px;margin:0 0 8px;"><strong>Compensação Especial de Trabalho (CET):</strong><br/>
-        ${cetDesc}</p>
-        ${substDesc ? `<p style="font-size:13px;margin:0;"><strong>Substituição de Função:</strong><br/>${substDesc}</p>` : ""}
+        <p style="font-size:13px;margin:0 0 8px;"><strong>CET:</strong> ${cetDesc}</p>
+        ${substDesc?`<p style="font-size:13px;margin:0;"><strong>Substituição:</strong> ${substDesc}</p>`:""}
       </div>
-
-      <p style="font-size:13px;line-height:1.8;text-align:justify;">
-        Por ser verdade, firmo a presente declaração para que produza os efeitos legais.
-      </p>
-
-      <p style="font-size:13px;margin-top:32px;text-align:center;">
-        Vitória da Conquista, ${d}.
-      </p>
-
+      <p style="font-size:13px;text-align:center;margin-top:32px;">Vitória da Conquista, ${d}.</p>
       <div style="margin-top:48px;text-align:center;">
         <div style="border-top:1px solid #000;display:inline-block;min-width:280px;padding-top:6px;font-size:12px;">
-          ${emitidoPor}<br/>
-          Comandante — 77ª CIPM
+          ${emitidoPor}<br/>Comandante — 77ª CIPM
         </div>
       </div>
-
-      <div style="margin-top:28px;border-top:1px solid #ccc;padding-top:8px;font-style:italic;font-size:10px;color:#555;text-align:right;">
-        Emitido em ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
-      </div>
     </div>`;
-
     return html;
+  }
+
+  // ── ABA BUSCA POR POLICIAL ─────────────────────────────────────────────────
+  function AbaBusca() {
+    return (
+      <div>
+        <div style={{marginBottom:12}}>
+          <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>setSelectedOfficer(o)}/>
+        </div>
+        {selectedOfficer && (()=>{
+          const o = selectedOfficer;
+          const vAtivas = vantagens.filter(v=>v.policialId===o.id&&(!v.dataFim||v.dataFim>=hoje));
+          const vHist   = vantagens.filter(v=>v.policialId===o.id&&v.dataFim&&v.dataFim<hoje);
+          return (
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,background:"#f0f4ff",borderRadius:9,padding:"10px 14px",marginBottom:12}}>
+                <Avatar name={o.nome} size={36}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{o.nome.toUpperCase()}</div>
+                  <div style={{fontSize:12,color:"#6b7280"}}>{o.grau} · Mat. {cleanMat(o.matricula)}</div>
+                </div>
+                <Btn small onClick={()=>abrirNova(o)}>+ Vantagem</Btn>
+                <Btn small variant="secondary" onClick={()=>setMasfOfficer(o)}>📜 MASF</Btn>
+              </div>
+
+              {/* Vantagens ativas */}
+              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Vantagens ativas</div>
+              {vAtivas.length===0 && <p style={{color:"#9ca3af",fontSize:12,marginBottom:12}}>Nenhuma vantagem ativa.</p>}
+              {vAtivas.map(v=>(
+                <div key={v.id} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"10px 12px",marginBottom:6,display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <div style={{flex:1}}>
+                    <Badge color="#dbeafe" textColor="#1d4ed8">{v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}</Badge>
+                    <div style={{fontSize:11,color:"#6b7280",marginTop:4}}>Início: {fmtDate(v.dataInicio)} {v.bio&&`· ${v.bio}`}</div>
+                  </div>
+                  <div style={{display:"flex",gap:4}}>
+                    <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
+                    <Btn small variant="warning" onClick={()=>setConfirm({msg:`Concluir esta vantagem?`,action:()=>concluirVant(v)})}>⏹ Concluir</Btn>
+                    <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir esta vantagem?",action:()=>excluirVant(v.id)})}>🗑</Btn>
+                  </div>
+                </div>
+              ))}
+
+              {/* Histórico */}
+              {vHist.length>0 && (
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>📋 Histórico (concluídas)</div>
+                  {vHist.map(v=>(
+                    <div key={v.id} style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",marginBottom:6,display:"flex",gap:10,alignItems:"flex-start",opacity:0.8}}>
+                      <div style={{flex:1}}>
+                        <Badge color="#f3f4f6" textColor="#374151">{v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}</Badge>
+                        <div style={{fontSize:11,color:"#6b7280",marginTop:4}}>
+                          {fmtDate(v.dataInicio)} → {fmtDate(v.dataFim)} {v.bio&&`· ${v.bio}`}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:4}}>
+                        <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
+                        <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir do histórico?",action:()=>excluirVant(v.id)})}>🗑</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  }
+
+  // ── ABA LISTA GERAL ────────────────────────────────────────────────────────
+  function AbaLista() {
+    const lista = listaAtual.filter(v=>{
+      if (fGrau!=="todos") { const o=getOfficer(v.policialId); if(!o||o.grau!==fGrau) return false; }
+      if (fTipo!=="todos" && v.categoria!==fTipo) return false;
+      return true;
+    }).sort((a,b)=>{
+      const oa=getOfficer(a.policialId)||{}, ob=getOfficer(b.policialId)||{};
+      return rankSort(oa,ob);
+    });
+    return (
+      <div>
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          <select value={fGrau} onChange={e=>setFGrau(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+            <option value="todos">Todos os graus</option>
+            {RANK_ORDER.filter(r=>officers.some(o=>o.grau===r)).map(r=><option key={r} value={r}>{r}</option>)}
+          </select>
+          <select value={fTipo} onChange={e=>setFTipo(e.target.value)} style={{padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12,background:"#fff"}}>
+            <option value="todos">Todos os tipos</option>
+            <option value="cet">CET</option>
+            <option value="subst">Substituição</option>
+          </select>
+          <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
+            <button onClick={()=>setVerConcluidas(false)} style={{padding:"7px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:!verConcluidas?600:400,background:!verConcluidas?"#1e3a5f":"transparent",color:!verConcluidas?"#fff":"#374151"}}>Ativas</button>
+            <button onClick={()=>setVerConcluidas(true)} style={{padding:"7px 12px",border:"none",cursor:"pointer",fontSize:12,fontWeight:verConcluidas?600:400,background:verConcluidas?"#374151":"transparent",color:verConcluidas?"#fff":"#374151"}}>Histórico</button>
+          </div>
+        </div>
+        {lista.length===0 && <div style={{textAlign:"center",padding:24,color:"#9ca3af",fontSize:13}}>Nenhuma vantagem encontrada.</div>}
+        {lista.map(v=>{
+          const o = getOfficer(v.policialId);
+          return (
+            <Card key={v.id} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:8,opacity:verConcluidas?0.8:1}}>
+              {o&&<Avatar name={o.nome} size={32}/>}
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{o?o.nome.toUpperCase():"—"}</div>
+                <div style={{fontSize:11,color:"#6b7280"}}>{o?.grau} · Mat. {cleanMat(o?.matricula)}</div>
+                <div style={{marginTop:4}}>
+                  <Badge color={verConcluidas?"#f3f4f6":"#dbeafe"} textColor={verConcluidas?"#374151":"#1d4ed8"}>
+                    {v.categoria==="cet"?`CET ${v.tipo||""}`:v.categoria==="subst"?`Subst. ${v.grauSubst||""}`:"MASF"}
+                  </Badge>
+                </div>
+                <div style={{fontSize:11,color:"#6b7280",marginTop:2}}>
+                  {fmtDate(v.dataInicio)}{v.dataFim?` → ${fmtDate(v.dataFim)}`:""} {v.bio&&`· ${v.bio}`}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:4}}>
+                <Btn small variant="secondary" onClick={()=>abrirEditar(v)}>✏️</Btn>
+                {!verConcluidas && <Btn small variant="warning" onClick={()=>setConfirm({msg:"Concluir esta vantagem?",action:()=>concluirVant(v)})}>⏹</Btn>}
+                <Btn small variant="danger" onClick={()=>setConfirm({msg:"Excluir?",action:()=>excluirVant(v.id)})}>🗑</Btn>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    );
   }
 
   return (
     <div>
       {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
-      {modalTipo==="cet" && selectedOfficer && ModalCet({officer: selectedOfficer})}
-      {modalTipo==="subst" && selectedOfficer && ModalSubst({officer: selectedOfficer})}
-      
-      {/* MASF Modal */}
-      {masfModal && (
-        <Modal title="Declaração MASF" onClose={()=>{setMasfModal(false);setMasfOfficer(null);}}>
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:12,color:"#374151",fontWeight:500,marginBottom:6}}>Selecione o policial:</div>
-            <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>setMasfOfficer(o)}/>
-            {masfOfficer&&<div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",fontSize:13,marginBottom:8}}><strong>{masfOfficer.grau} {masfOfficer.nome}</strong></div>}
+      {ModalVant()}
+
+      {/* Modal MASF */}
+      {masfOfficer && (
+        <Modal title="Declaração MASF" onClose={()=>{setMasfOfficer(null);}}>
+          <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginBottom:12,fontSize:13}}>
+            <strong>{masfOfficer.grau} {masfOfficer.nome}</strong>
           </div>
-          <Input label="Data da declaração" type="date" value={masfData||new Date().toISOString().slice(0,10)} onChange={e=>setMasfData(e.target.value)}/>
+          <Input label="Data da declaração" type="date" value={masfData||hoje} onChange={e=>setMasfData(e.target.value)}/>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-            <Btn variant="secondary" onClick={()=>{setMasfModal(false);setMasfOfficer(null);}}>Cancelar</Btn>
+            <Btn variant="secondary" onClick={()=>setMasfOfficer(null)}>Cancelar</Btn>
             <Btn onClick={()=>{
-              if (!masfOfficer) {alert("Selecione um policial.");return;}
               const html = gerarMASF(masfOfficer, masfData);
               const w = window.open("","_blank");
-              if (w) {
-                w.document.open();
-                w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MASF</title><style>@media print{body{margin:0;}}</style></head><body>${html}</body></html>`);
-                w.document.close();
-                setTimeout(()=>w.print(),600);
-              } else {
-                try {
-                  const b = new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MASF</title></head><body>${html}</body></html>`],{type:"text/html"});
-                  const u = URL.createObjectURL(b);
-                  const a = document.createElement("a");a.href=u;a.target="_blank";a.click();
-                  setTimeout(()=>URL.revokeObjectURL(u),3000);
-                } catch(e2) {alert("Não foi possível abrir. Por favor permita popups.");}
-              }
-              setMasfModal(false);setMasfOfficer(null);
+              if (w) { w.document.open(); w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MASF</title></head><body>${html}</body></html>`); w.document.close(); setTimeout(()=>w.print(),600); }
+              setMasfOfficer(null);
             }}>🖨️ Gerar MASF</Btn>
           </div>
         </Modal>
       )}
 
-      {/* Alerta CNH para quem recebe CET */}
+      {/* Alerta CNH */}
       {(()=>{
-        const hoje = new Date();
-        const d60 = new Date(hoje); d60.setDate(d60.getDate()+60);
+        const d60 = new Date(); d60.setDate(d60.getDate()+60);
         const d60str = d60.toISOString().slice(0,10);
-        const todayStr = hoje.toISOString().slice(0,10);
-        // Policiais com CET ativo E CNH vencida ou vencendo em 60 dias
-        const cetIds = new Set(
-          (vantagens||[]).filter(v=>v.categoria==="cet"&&!v.dataFim).map(v=>v.policialId)
-        );
-        const alerta = officers.filter(o=>{
-          if (!cetIds.has(o.id)) return false;
-          if (!o.validCnh) return false;
-          return o.validCnh <= d60str;
-        }).sort((a,b)=>a.validCnh.localeCompare(b.validCnh));
+        const cetIds = new Set(vantAtivas.filter(v=>v.categoria==="cet").map(v=>v.policialId));
+        const alerta = officers.filter(o=>cetIds.has(o.id)&&o.validCnh&&o.validCnh<=d60str).sort((a,b)=>a.validCnh.localeCompare(b.validCnh));
         if (!alerta.length) return null;
-        const vencidas = alerta.filter(o=>o.validCnh < todayStr).length;
-        const titulo = vencidas > 0
-          ? `${alerta.length} policial(is) com CET têm CNH vencida (${vencidas}) ou vencendo em 60 dias`
-          : `${alerta.length} policial(is) com CET têm CNH vencendo em até 60 dias`;
-        return (
-          <AlertaBanner cor="#fee2e2" borda="#fca5a5" icone="🚗"
-            titulo={titulo}
-            linhas={alerta.map(o=>{
-              const diff = Math.ceil((new Date(o.validCnh+"T12:00:00")-hoje)/(24*3600*1000));
-              return `${o.grau} ${o.nome} — Mat. ${cleanMat(o.matricula)} — Cat. ${o.categoriaCnh||"?"} — ${diff<=0?"⛔ VENCIDA":"vence em "+diff+" dias"} (${fmtDate(o.validCnh)})`;
-            })}
-            chaveStorage="vant_cnh_venc" loggedUser={loggedUser}
-          />
-        );
+        const todayStr = new Date().toISOString().slice(0,10);
+        return <AlertaBanner cor="#fee2e2" borda="#fca5a5" icone="🚗"
+          titulo={`${alerta.length} policial(is) com CET têm CNH vencida ou vencendo em 60 dias`}
+          linhas={alerta.map(o=>{const diff=Math.ceil((new Date(o.validCnh+"T12:00:00")-new Date())/(24*3600*1000));return `${o.grau} ${o.nome} — ${diff<=0?"⛔ VENCIDA":"vence em "+diff+" dias"} (${fmtDate(o.validCnh)})`;}) }
+          chaveStorage="vant_cnh_venc" loggedUser={loggedUser}/>;
       })()}
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
@@ -4280,94 +4120,19 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
           <p style={{fontSize:12,color:"#6b7280",margin:"3px 0 0"}}>CET e Substituições por policial</p>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <Btn small variant="secondary" onClick={()=>setMasfModal(true)}>📜 Declaração MASF</Btn>
           <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
             <button onClick={()=>setAba("busca")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="busca"?600:400,background:aba==="busca"?"#1e3a5f":"transparent",color:aba==="busca"?"#fff":"#374151"}}>👤 Por policial</button>
-            <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Listas</button>
+            <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Lista geral</button>
           </div>
         </div>
       </div>
 
-      {aba==="busca" && (
-        <div>
-          <Card style={{marginBottom:16}}>
-            <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:8}}>Buscar policial</div>
-            <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{setSelectedOfficer(o);setAba("detalhe");}}/>
-          </Card>
-        </div>
-      )}
-
-      {aba==="detalhe" && selectedOfficer && (
-        <div>
-          <button onClick={()=>{setAba("busca");setSelectedOfficer(null);}} style={{background:"none",border:"none",color:"#1d4ed8",cursor:"pointer",fontSize:13,marginBottom:12}}>← Voltar à busca</button>
-          <Card>
-            <DetalhePolicial officer={selectedOfficer}/>
-          </Card>
-        </div>
-      )}
-
-      {aba==="lista" && <ListaVantagens/>}
+      {aba==="busca" && AbaBusca()}
+      {aba==="lista" && AbaLista()}
     </div>
   );
 }
 
-
-function RelModal({ html, onClose }) {
-  function doPrint() {
-    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
-      <title>Relatório SiRH77</title>
-      <style>
-        body{margin:24px 32px;font-family:Arial,sans-serif;}
-        @media print{body{margin:16px;}@page{margin:16mm;}}
-        table{border-collapse:collapse;width:100%;}
-        th,td{border:1px solid #ccc;padding:5px 7px;font-size:11px;}
-        th{background:#1e3a5f;color:#fff;}
-      </style>
-      </head><body>${html}</body></html>`;
-    try {
-      const blob = new Blob([fullHtml], {type:"text/html;charset=utf-8"});
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.target = "_blank";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(()=>URL.revokeObjectURL(blobUrl), 5000);
-    } catch(e) {
-      // fallback: data URI
-      const encoded = "data:text/html;charset=utf-8," + encodeURIComponent(fullHtml);
-      const a = document.createElement("a");
-      a.href = encoded;
-      a.download = "relatorio_sirh77.html";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-  }
-
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:2000,overflowY:"auto",padding:"24px 12px"}}>
-      <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:860,overflow:"hidden"}}>
-        <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <span style={{color:"#fff",fontWeight:600,fontSize:14}}>📄 Pré-visualização do Relatório</span>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={doPrint} style={{background:"#16a34a",border:"none",color:"#fff",borderRadius:6,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600}}>🖨️ Imprimir / Salvar PDF</button>
-            <button onClick={onClose} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12}}>✕ Fechar</button>
-          </div>
-        </div>
-        <div style={{background:"#fef3c7",padding:"6px 16px",borderBottom:"1px solid #fcd34d",fontSize:11,color:"#92400e"}}>
-          💡 💡 Clique em <strong>🖨️ Abrir para imprimir</strong>. O relatório abrirá em nova aba — use <strong>Ctrl+P</strong> para salvar como PDF.
-        </div>
-        <div style={{padding:"24px 32px",background:"#fff",maxHeight:"75vh",overflowY:"auto"}} dangerouslySetInnerHTML={{__html:html}}/>
-      </div>
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────
-// MÓDULO EXPORTAR EXCEL
-// ──────────────────────────────────────────────
 function ModExportar({ officers }) {
   const [msg, setMsg] = useState("");
 
@@ -4672,7 +4437,7 @@ export default function App() {
               <h1 style={{fontSize:20,fontWeight:700,color:"#111827",margin:0}}>Painel Geral</h1>
               <p style={{fontSize:12,color:"#6b7280",margin:"3px 0 0"}}>77ª Companhia Independente de Polícia Militar · Vitória da Conquista</p>
             </div>
-            <Dashboard officers={officers} ferias={ferias} afastamentos={afastamentos} loggedUser={loggedUser} onFilter={f=>{ if(!f) return; setDashFilter(f); setPage("efetivo"); }}/>
+            <Dashboard officers={officers} ferias={ferias} afastamentos={afastamentos} loggedUser={loggedUser} locations={locations} onFilter={f=>{ if(!f) return; setDashFilter(f); setPage("efetivo"); }}/>
           </div>
         )}
         {page==="efetivo" && <ModEfetivo officers={officers} setOfficers={setOfficers} perm={perm} locations={locations} ferias={ferias} afastamentos={afastamentos} corregedoria={corregedoria} cursos={cursos} vantagens={vantagens} promocoes={promocoes} setPromocoes={setPromocoes} initialFilter={dashFilter} onFilterConsumed={()=>setDashFilter(null)} onOpenFeriasPlan={plan=>{setFeriasDetalhe(plan);setPage("ferias");}}/>}
