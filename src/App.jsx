@@ -1408,7 +1408,22 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
     if (fRank!=="todos") list=list.filter(o=>o.grau===fRank);
     if (fSexo!=="todos") list=list.filter(o=>o.sexo===fSexo);
     if (fLoc!=="todos") list=list.filter(o=>o.localTrabalho===fLoc);
-    if (fSit!=="todos") list=list.filter(o=>(o.situacao||"Ativo")===fSit);
+    if (fSit!=="todos") {
+      const todayStr2 = new Date().toISOString().slice(0,10);
+      // For JMS and Atestado, check afastamentos (situacao field may be "Ativo")
+      if (fSit==="Junta Médica") {
+        const jmsSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Junta Médica"&&!a.concluido).map(a=>a.policialId));
+        list = list.filter(o=>jmsSet.has(o.id)||(o.situacao||"Ativo")==="Junta Médica");
+      } else if (fSit==="Atestado") {
+        const atestSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Atestado"&&!a.concluido&&a.dataInicio<=todayStr2&&(!a.dataFim||a.dataFim>=todayStr2)).map(a=>a.policialId));
+        list = list.filter(o=>atestSet.has(o.id)||(o.situacao||"Ativo")==="Atestado");
+      } else if (fSit==="Restrição Médica") {
+        const restSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Restrição Médica"&&!a.concluido).map(a=>a.policialId));
+        list = list.filter(o=>restSet.has(o.id)||(o.situacao||"Ativo")==="Restrição Médica");
+      } else {
+        list = list.filter(o=>(o.situacao||"Ativo")===fSit);
+      }
+    }
     if (fOrigem!=="todos") list=list.filter(o=>o.origem===fOrigem);
     if (fAtivo==="ativo") list=list.filter(o=>!SITUACOES_INATIVO.includes(o.situacao||"Ativo"));
     else if (fAtivo==="inativo") list=list.filter(o=>SITUACOES_INATIVO.includes(o.situacao||"Ativo"));
@@ -1424,7 +1439,7 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
       });
     }
     return list.sort(rankSort);
-  }, [officers, search, fRank, fSexo, fLoc, fSit, fOrigem, fAtivo, filterIds, sortByAnt]);
+  }, [officers, afastamentos, search, fRank, fSexo, fLoc, fSit, fOrigem, fAtivo, filterIds, sortByAnt]);
 
   function saveNew(form) {
     if (!form.nome||!form.matricula) { alert("Nome e matrícula obrigatórios."); return; }
@@ -4054,13 +4069,16 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
 
   // ── Tabela de vantagem (usada em cada grupo) ───────────────────────────────
   function TabelaVant({ lista, titulo, cor, corText }) {
-    const policiais = lista.map(v=>({v, o:getOfficer(v.policialId)})).filter(x=>x.o).sort((a,b)=>rankSort(a.o,b.o));
+    const hoje = new Date().toISOString().slice(0,10);
+    const ativos = lista.filter(v=>!v.dataFim||v.dataFim>=hoje);
+    const hist   = lista.filter(v=>v.dataFim&&v.dataFim<hoje);
+    const policiais = ativos.map(v=>({v, o:getOfficer(v.policialId)})).filter(x=>x.o).sort((a,b)=>rankSort(a.o,b.o));
     return (
       <Card style={{marginBottom:16}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div>
             <Badge color={cor} textColor={corText}>{titulo}</Badge>
-            <span style={{fontSize:12,color:"#6b7280",marginLeft:8}}>{policiais.length} policial(is)</span>
+            <span style={{fontSize:12,color:"#6b7280",marginLeft:8}}>{policiais.length} policial(is) ativo(s){hist.length>0&&` · ${hist.length} no histórico`}</span>
           </div>
           <Btn small variant="secondary" onClick={()=>{setBuscaEdicao("");setModalEditar({titulo, lista});}}>✏️ Editar lista</Btn>
         </div>
@@ -4072,8 +4090,8 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
                 <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Nome</th>
                 <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Matrícula</th>
                 <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Início</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>Fim</th>
                 <th style={{padding:"6px 10px",textAlign:"left",color:"#374151"}}>BGO</th>
-                <th style={{padding:"6px 10px",textAlign:"center",color:"#374151"}}>MASF</th>
                 <th style={{padding:"6px 10px",textAlign:"center",color:"#374151"}}></th>
               </tr>
             </thead>
@@ -4084,18 +4102,52 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
                   <td style={{padding:"6px 10px",fontWeight:500}}>{o.nomeGuerra||o.nome}</td>
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{cleanMat(o.matricula)}</td>
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{fmtDate(v.dataInicio)}</td>
+                  <td style={{padding:"6px 10px"}}>
+                    <input type="date" value={v.dataFim||""} onChange={e=>{
+                      setVantagens(vs=>vs.map(x=>x.id===v.id?{...x,dataFim:e.target.value}:x));
+                    }} style={{border:"1px solid #d1d5db",borderRadius:5,padding:"2px 6px",fontSize:11,outline:"none",color:v.dataFim?"#dc2626":"#6b7280"}}/>
+                  </td>
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{v.bio||"—"}</td>
-
                   <td style={{padding:"6px 10px",textAlign:"center"}}>
                     <button onClick={()=>setConfirm({msg:`Remover ${o.nome} de ${titulo}?`,action:()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))})}
                       style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:14}}>✕</button>
                   </td>
                 </tr>
               ))}
-              {policiais.length===0&&<tr><td colSpan={7} style={{padding:12,textAlign:"center",color:"#9ca3af"}}>Nenhum policial.</td></tr>}
+              {policiais.length===0&&<tr><td colSpan={7} style={{padding:12,textAlign:"center",color:"#9ca3af"}}>Nenhum policial ativo.</td></tr>}
             </tbody>
           </table>
         </div>
+        {/* Histórico */}
+        {hist.length>0 && (
+          <details style={{marginTop:10}}>
+            <summary style={{fontSize:12,color:"#6b7280",cursor:"pointer",padding:"4px 0"}}>📋 Histórico — {hist.length} registro(s) encerrado(s)</summary>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginTop:6,opacity:0.75}}>
+              <thead><tr style={{background:"#f3f4f6"}}>
+                <th style={{padding:"4px 8px",textAlign:"left"}}>G.H.</th>
+                <th style={{padding:"4px 8px",textAlign:"left"}}>Nome</th>
+                <th style={{padding:"4px 8px",textAlign:"left"}}>Início</th>
+                <th style={{padding:"4px 8px",textAlign:"left"}}>Fim</th>
+                <th style={{padding:"4px 8px",textAlign:"left"}}>BGO</th>
+                <th style={{padding:"4px 8px"}}></th>
+              </tr></thead>
+              <tbody>
+                {hist.map((v,i)=>{const o=getOfficer(v.policialId);return (
+                  <tr key={v.id} style={{background:i%2===0?"#fafafa":"#f3f4f6",borderBottom:"1px solid #e5e7eb"}}>
+                    <td style={{padding:"4px 8px"}}>{o?.grau||"—"}</td>
+                    <td style={{padding:"4px 8px"}}>{o?.nome||"—"}</td>
+                    <td style={{padding:"4px 8px",color:"#6b7280"}}>{fmtDate(v.dataInicio)}</td>
+                    <td style={{padding:"4px 8px",color:"#dc2626"}}>{fmtDate(v.dataFim)}</td>
+                    <td style={{padding:"4px 8px",color:"#6b7280"}}>{v.bio||"—"}</td>
+                    <td style={{padding:"4px 8px",textAlign:"center"}}>
+                      <button onClick={()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:12}}>🗑</button>
+                    </td>
+                  </tr>
+                );})}
+              </tbody>
+            </table>
+          </details>
+        )}
       </Card>
     );
   }
