@@ -2756,7 +2756,70 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
   const [fTipo, setFTipo] = useState("todos");
   const [fGrau, setFGrau] = useState("todos");
   const [verConcluidos, setVerConcluidos] = useState(false);
+  const [relHtml, setRelHtml] = useState("");
+  const [modalRelSaude, setModalRelSaude] = useState(false);
+  const [relOfficer, setRelOfficer] = useState(null);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const cab = () => `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 32px;">
+    <div style="text-align:center;margin-bottom:16px;font-weight:bold;font-size:11px;line-height:2;text-transform:uppercase;">
+      POLÍCIA MILITAR DA BAHIA<br/>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR
+    </div>`;
+  const rod = () => `<div style="margin-top:24px;border-top:1px solid #ccc;padding-top:8px;font-size:10px;color:#555;text-align:right;font-style:italic;">
+    Relatório emitido em ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")} — SiRH77</div></div>`;
+
+  function gerarRelSaude(modo, officerFiltro) {
+    const hoje2 = new Date().toLocaleDateString("pt-BR");
+    const lista = afastamentosCorrigidos.filter(a => {
+      if (a.concluido) return false;
+      if (officerFiltro && a.policialId !== officerFiltro.id) return false;
+      return true;
+    }).sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
+
+    const getO = id => officers.find(o=>o.id===id);
+
+    let html = cab();
+    const titulo = officerFiltro
+      ? `RELATÓRIO DE SAÚDE — ${officerFiltro.grau} ${officerFiltro.nome}`
+      : "RELATÓRIO GERAL DE SAÚDE / AFASTAMENTOS";
+    html += `<div style="text-align:center;font-size:14px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;margin-bottom:16px;">${titulo}</div>`;
+    html += `<p style="font-size:11px;color:#555;margin-bottom:12px;">Data de emissão: ${hoje2} — Total de registros ativos: ${lista.length}</p>`;
+
+    // Group by type
+    const tipos = [...new Set(lista.map(a=>a.tipo))].sort();
+    if (lista.length === 0) {
+      html += `<p style="font-size:12px;color:#555;">Nenhum afastamento ativo encontrado.</p>`;
+    }
+    for (const tipo of tipos) {
+      const grupo = lista.filter(a=>a.tipo===tipo);
+      html += `<div style="margin-bottom:16px;">
+        <div style="font-weight:bold;font-size:12px;background:#1e3a5f;color:#fff;padding:5px 10px;margin-bottom:4px;">${tipo} (${grupo.length})</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr style="background:#f0f4ff;">
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Grau/Nome</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Matrícula</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Início</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Fim/Previsão</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Observação</th>
+          </tr></thead><tbody>`;
+      grupo.forEach((a,i) => {
+        const o = getO(a.policialId);
+        const bg = i%2===0?"#fff":"#f9f9f9";
+        html += `<tr style="background:${bg};">
+          <td style="padding:4px 8px;border:1px solid #ddd;">${o?`${o.grau} ${o.nome}`:"—"}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;">${o?o.matricula:"—"}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;">${a.dataInicio?new Date(a.dataInicio+"T12:00:00").toLocaleDateString("pt-BR"):"—"}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;">${a.dataFim?new Date(a.dataFim+"T12:00:00").toLocaleDateString("pt-BR"):a.novaInspDia?`Próx. JMS: ${new Date(a.novaInspDia+"T12:00:00").toLocaleDateString("pt-BR")}`:"Em aberto"}</td>
+          <td style="padding:4px 8px;border:1px solid #ddd;">${a.parecer||a.cid||a.restricao||a.descricao||"—"}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
+    html += rod();
+    setRelHtml(html);
+    setModalRelSaude(false);
+    setRelOfficer(null);
+  }
 
   // Prazos automáticos por tipo
   const PRAZOS = {
@@ -2991,9 +3054,35 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
         />
       )}
 
+      {/* RelModal */}
+      {relHtml && <RelModal html={relHtml} onClose={()=>setRelHtml("")}/>}
+
+      {/* Modal relatório individual */}
+      {modalRelSaude && (
+        <Modal title="Relatório Individual de Saúde" onClose={()=>setModalRelSaude(false)}>
+          <p style={{fontSize:13,color:"#374151",marginBottom:12}}>Selecione o policial para gerar o relatório:</p>
+          <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{setRelOfficer(o);}}/>
+          {relOfficer && (
+            <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginTop:8,fontSize:13}}>
+              <strong>{relOfficer.grau} {relOfficer.nome}</strong>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalRelSaude(false)}>Cancelar</Btn>
+            <Btn onClick={()=>gerarRelSaude("individual", relOfficer)} disabled={!relOfficer}>
+              📋 Gerar relatório
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Saúde / Afastamentos</h2>
-        <Btn onClick={()=>{setForm({policialId:"",tipo:"Atestado",dataInicio:"",aContarDe:"",afastamento:"",dataFim:"",novaInspDia:"",parecer:"",restricao:"",cid:"",medico:"",hospital:"",crm:"",descricao:"",concluido:false,dataCasamento:"",nomeConjuge:"",nomeFilho:"",dataNascFilho:"",certidaoNasc:"",cpfFilho:"",parentesco:"",nomeFalecido:"",dataObito:"",registroObito:""});setModal({mode:"new"});}}>+ Registrar</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn small variant="secondary" onClick={()=>gerarRelSaude("geral")}>📋 Rel. geral</Btn>
+          <Btn small variant="secondary" onClick={()=>setModalRelSaude(true)}>👤 Rel. individual</Btn>
+          <Btn onClick={()=>{setForm({policialId:"",tipo:"Atestado",dataInicio:"",aContarDe:"",afastamento:"",dataFim:"",novaInspDia:"",parecer:"",restricao:"",cid:"",medico:"",hospital:"",crm:"",descricao:"",concluido:false,dataCasamento:"",nomeConjuge:"",nomeFilho:"",dataNascFilho:"",certidaoNasc:"",cpfFilho:"",parentesco:"",nomeFalecido:"",dataObito:"",registroObito:""});setModal({mode:"new"});}}>+ Registrar</Btn>
+        </div>
       </div>
 
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
