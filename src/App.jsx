@@ -161,6 +161,37 @@ function Modal({ title, onClose, children, wide=false }) {
   );
 }
 
+// RelModal: exibe HTML gerado e permite imprimir
+function RelModal({ html, onClose }) {
+  const printRef = React.useRef();
+  function imprimir() {
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.open();
+      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>Relatório</title>
+        <style>body{margin:0;padding:0;font-family:Arial,sans-serif;} @media print{body{margin:0;}}</style>
+        </head><body>${html}</body></html>`);
+      w.document.close();
+      setTimeout(() => { w.focus(); w.print(); }, 500);
+    }
+  }
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:3000,overflowY:"auto",padding:"20px 12px"}}>
+      <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:820,overflow:"hidden"}}>
+        <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span style={{color:"#fff",fontWeight:700,fontSize:15}}>📄 Relatório</span>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={imprimir} style={{background:"#d4af37",border:"none",color:"#1e3a5f",borderRadius:6,padding:"5px 14px",cursor:"pointer",fontSize:12,fontWeight:600}}>🖨️ Imprimir</button>
+            <button onClick={onClose} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:12}}>✕ Fechar</button>
+          </div>
+        </div>
+        <div style={{maxHeight:"80vh",overflowY:"auto",padding:8}} dangerouslySetInnerHTML={{__html:html}}/>
+      </div>
+    </div>
+  );
+}
+
 function Confirm({ msg, onYes, onNo }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:3000}}>
