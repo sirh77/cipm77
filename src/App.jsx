@@ -520,10 +520,25 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
   ];
 
   // Locais cadastrados no módulo (vinculados ao cadastro oficial)
-  const locationCards = (locations||[]).map(loc => {
-    const pols = ativos.filter(o=>(o.localTrabalho||"")=== loc);
-    return { label:loc, value:pols.length, ids:pols.map(o=>o.id) };
-  });
+  // Locais cadastrados no módulo — excluir SEDE e BCS que já estão nos cards
+  const EXCLUIR_DOS_LOCAIS = ["SEDE","BCS"];
+  const locationCards = (locations||[])
+    .filter(loc=>!EXCLUIR_DOS_LOCAIS.some(e=>loc.toUpperCase()===e.toUpperCase()))
+    .map(loc => {
+      const pols = ativos.filter(o=>(o.localTrabalho||"")=== loc);
+      return { label:loc, value:pols.length, ids:pols.map(o=>o.id) };
+    });
+
+  // ─── Lic. Int. Particular - alerta 30 dias antes do fim ────────────────────
+  const licPartAlert = (() => {
+    const hoje30 = new Date(); hoje30.setDate(hoje30.getDate()+30);
+    const hj = new Date().toISOString().slice(0,10);
+    const h30 = hoje30.toISOString().slice(0,10);
+    return ativos.filter(o => {
+      const df = o.licIntParticular?.dataFim;
+      return df && df >= hj && df <= h30;
+    });
+  })();
 
   // ─── Alertas calculados ──────────────────────────────────────────
   const hoje2 = new Date();
@@ -601,6 +616,18 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
         />
       )}
 
+      {/* Alerta Lic. Int. Particular vencendo em 30 dias */}
+      {licPartAlert.length>0 && (
+        <AlertaBanner cor="#fef3c7" borda="#fcd34d" icone="📋"
+          titulo={`${licPartAlert.length} policial(is) com Lic. Int. Particular vencendo em até 30 dias`}
+          linhas={licPartAlert.map(o=>{
+            const df=o.licIntParticular?.dataFim;
+            const diff=Math.ceil((new Date(df+"T12:00:00")-new Date())/(24*3600*1000));
+            return `${o.grau} ${o.nome} — vence em ${diff} dia(s) (${fmtDate(df)})`;
+          })}
+          chaveStorage="lic_part_venc" loggedUser={loggedUser}/>
+      )}
+
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
         {statCards.map(s=>(
           <div key={s.label} onClick={()=>onFilter&&onFilter(s.filter)}
@@ -617,29 +644,53 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         <Card>
           <div style={{fontWeight:600,fontSize:14,marginBottom:12,color:"#374151"}}>Grau Hierárquico</div>
-          {grauSorted.map(([g,c])=>(
-            <div key={g} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+          <div style={{display:"flex",gap:4,marginBottom:6,fontSize:10,color:"#9ca3af",fontWeight:600}}>
+            <span style={{minWidth:110}}>GRAU</span><span style={{flex:1}}></span>
+            <span style={{minWidth:28,textAlign:"right"}}>TOT</span>
+            <span style={{minWidth:24,textAlign:"right",color:"#3b82f6"}}>M</span>
+            <span style={{minWidth:24,textAlign:"right",color:"#ec4899"}}>F</span>
+          </div>
+          {grauSorted.map(([g,c])=>{
+            const masc=ativos.filter(o=>o.grau===g&&(o.sexo||"MASC")==="MASC").length;
+            const fem=ativos.filter(o=>o.grau===g&&o.sexo==="FEM").length;
+            return (
+            <div key={g} style={{display:"flex",alignItems:"center",gap:4,marginBottom:5}}>
               <span style={{fontSize:11,color:"#6b7280",minWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g}</span>
-              <div style={{flex:1,background:"#f3f4f6",borderRadius:4,height:12,overflow:"hidden"}}>
+              <div style={{flex:1,background:"#f3f4f6",borderRadius:4,height:10,overflow:"hidden"}}>
                 <div style={{width:`${Math.round((c/total)*100)}%`,height:"100%",background:"#1e3a5f",borderRadius:4,minWidth:4}}/>
               </div>
-              <span style={{fontSize:11,color:"#1e3a5f",fontWeight:700,minWidth:20,textAlign:"right"}}>{c}</span>
+              <span style={{fontSize:12,fontWeight:700,color:"#111827",minWidth:28,textAlign:"right"}}>{c}</span>
+              <span style={{fontSize:11,fontWeight:500,color:"#3b82f6",minWidth:24,textAlign:"right"}}>{masc}</span>
+              <span style={{fontSize:11,fontWeight:500,color:"#ec4899",minWidth:24,textAlign:"right"}}>{fem}</span>
             </div>
-          ))}
+            );
+          })}
         </Card>
 
         <Card style={{maxHeight:340,overflowY:"auto"}}>
           <div style={{fontWeight:600,fontSize:14,marginBottom:12,color:"#374151"}}>Locais de trabalho</div>
           {locationCards.length===0 && <p style={{color:"#9ca3af",fontSize:12}}>Nenhum local cadastrado.</p>}
-          {locationCards.map(c=>(
-            <div key={c.label} onClick={()=>onFilter({type:"ids",ids:c.ids})}
-              style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,cursor:"pointer",padding:"3px 6px",borderRadius:6,transition:"background 0.1s"}}
-              onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <span style={{fontSize:11,color:"#374151",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{c.label}</span>
-              <span style={{background:"#1e3a5f",color:"#fff",borderRadius:999,fontSize:11,fontWeight:600,padding:"1px 8px",minWidth:26,textAlign:"center"}}>{c.value}</span>
-            </div>
-          ))}
+          <div style={{display:"flex",gap:4,marginBottom:6,fontSize:10,color:"#9ca3af",fontWeight:600}}>
+            <span style={{flex:1}}>LOCAL</span>
+            <span style={{minWidth:28,textAlign:"right"}}>TOT</span>
+            <span style={{minWidth:22,textAlign:"right",color:"#3b82f6"}}>M</span>
+            <span style={{minWidth:22,textAlign:"right",color:"#ec4899"}}>F</span>
+          </div>
+          {locationCards.map(c=>{
+            const masc = c.ids.filter(id=>{const o=officers.find(x=>x.id===id);return o&&(o.sexo||"MASC")==="MASC";}).length;
+            const fem  = c.ids.filter(id=>{const o=officers.find(x=>x.id===id);return o&&o.sexo==="FEM";}).length;
+            return (
+              <div key={c.label} onClick={()=>onFilter({type:"ids",ids:c.ids})}
+                style={{display:"flex",alignItems:"center",gap:4,marginBottom:5,cursor:"pointer",padding:"3px 6px",borderRadius:6,transition:"background 0.1s"}}
+                onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <span style={{fontSize:11,color:"#374151",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{c.label}</span>
+                <span style={{fontSize:12,fontWeight:700,color:"#111827",minWidth:28,textAlign:"right"}}>{c.value}</span>
+                <span style={{fontSize:11,fontWeight:500,color:"#3b82f6",minWidth:22,textAlign:"right"}}>{masc}</span>
+                <span style={{fontSize:11,fontWeight:500,color:"#ec4899",minWidth:22,textAlign:"right"}}>{fem}</span>
+              </div>
+            );
+          })}
         </Card>
       </div>
 
@@ -731,6 +782,7 @@ function FormPolicial({ initial={}, onSave, onCancel, locations }) {
         {form.licIntParticular?.ativo && (
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Input label="Data início" type="date" value={form.licIntParticular?.dataInicio||""} onChange={e=>set("licIntParticular",{...(form.licIntParticular||{}),dataInicio:e.target.value})}/>
+            <Input label="Data fim (retorno previsto)" type="date" value={form.licIntParticular?.dataFim||""} onChange={e=>set("licIntParticular",{...(form.licIntParticular||{}),dataFim:e.target.value})}/>
             <Input label="BGO" value={form.licIntParticular?.bgo||""} onChange={e=>set("licIntParticular",{...(form.licIntParticular||{}),bgo:e.target.value})} placeholder="BGO Nº 001 DE 2026"/>
           </div>
         )}
@@ -1507,7 +1559,7 @@ function ModLocais({ locations, setLocations, officers, setOfficers }) {
     const t = novo.trim().toUpperCase();
     if (!t) return;
     if (locations.includes(t)) { alert("Local já existe."); return; }
-    setLocations(ls=>[...ls, t].sort());
+    setLocations(ls=>[...ls, t]);
     setNovo("");
   }
 
@@ -1627,14 +1679,19 @@ function ModLocais({ locations, setLocations, officers, setOfficers }) {
         {filtered.map(l=>{
           const count = (policiaisPorLocal[l]||[]).length;
           return (
-            <div key={l} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 0",borderBottom:"1px solid #f3f4f6",cursor:"pointer"}}
-              onClick={()=>setLocalDetalhe(l)}>
-              <div style={{flex:1}}>
+            <div key={l} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+              <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                <button onClick={()=>{const i=locations.indexOf(l);if(i>0){const n=[...locations];[n[i-1],n[i]]=[n[i],n[i-1]];setLocations(n);}}}
+                  style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af",fontSize:10,lineHeight:1,padding:"1px 3px"}} title="Mover para cima">▲</button>
+                <button onClick={()=>{const i=locations.indexOf(l);if(i<locations.length-1){const n=[...locations];[n[i],n[i+1]]=[n[i+1],n[i]];setLocations(n);}}}
+                  style={{background:"none",border:"none",cursor:"pointer",color:"#9ca3af",fontSize:10,lineHeight:1,padding:"1px 3px"}} title="Mover para baixo">▼</button>
+              </div>
+              <div style={{flex:1,cursor:"pointer"}} onClick={()=>setLocalDetalhe(l)}>
                 <div style={{fontWeight:600,fontSize:13,color:"#1e3a5f"}}>{l}</div>
                 <div style={{fontSize:11,color:"#6b7280"}}>{count} policial(is)</div>
               </div>
               <Badge color="#dbeafe" textColor="#1d4ed8">{count}</Badge>
-              <span style={{color:"#9ca3af",fontSize:14}}>›</span>
+              <span style={{color:"#9ca3af",fontSize:14,cursor:"pointer"}} onClick={()=>setLocalDetalhe(l)}>›</span>
               <button onClick={e=>{e.stopPropagation();setConfirm({msg:`Excluir local "${l}"?`,action:()=>del(l)});}}
                 style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:13,padding:"0 4px"}}>🗑</button>
             </div>
@@ -3842,7 +3899,6 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
   const vantConcluidas= (vantagens||[]).filter(v=>v.dataFim&&v.dataFim<hoje);
 
   // Grupos de vantagens ativas
-  const cetOp   = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="Operacional");
   const cet4    = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="4 Rodas");
   const cet2    = vantAtivas.filter(v=>v.categoria==="cet"&&v.tipo==="2 Rodas");
   const substs  = vantAtivas.filter(v=>v.categoria==="subst");
@@ -3904,9 +3960,7 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{cleanMat(o.matricula)}</td>
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{fmtDate(v.dataInicio)}</td>
                   <td style={{padding:"6px 10px",color:"#6b7280"}}>{v.bio||"—"}</td>
-                  <td style={{padding:"6px 10px",textAlign:"center"}}>
-                    <button onClick={()=>{setMasfOfficer(o);setMasfData(null);}} style={{background:"none",border:"none",cursor:"pointer",fontSize:14}} title="Gerar MASF">📜</button>
-                  </td>
+
                   <td style={{padding:"6px 10px",textAlign:"center"}}>
                     <button onClick={()=>setConfirm({msg:`Remover ${o.nome} de ${titulo}?`,action:()=>setVantagens(vs=>vs.filter(x=>x.id!==v.id))})}
                       style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:14}}>✕</button>
@@ -4016,7 +4070,6 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
 
       {aba==="lista" && (
         <div>
-          <TabelaVant lista={cetOp}  titulo="CET Operacional"   cor="#dbeafe" corText="#1d4ed8"/>
           <TabelaVant lista={cet4}   titulo="CET 4 Rodas (85%)" cor="#d1fae5" corText="#065f46"/>
           <TabelaVant lista={cet2}   titulo="CET 2 Rodas (105%)"cor="#fef3c7" corText="#92400e"/>
           <TabelaVant lista={substs} titulo="Substituição de Função" cor="#ede9fe" corText="#5b21b6"/>
