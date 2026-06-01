@@ -163,17 +163,22 @@ function Modal({ title, onClose, children, wide=false }) {
 
 // RelModal: exibe HTML gerado e permite imprimir
 function RelModal({ html, onClose }) {
-  const printRef = React.useRef();
   function imprimir() {
-    const w = window.open('', '_blank');
+    const conteudo = `<!DOCTYPE html><html><head><meta charset="utf-8">
+      <title>Relatório SiRH77</title>
+      <style>
+        body{margin:20px;font-family:Arial,sans-serif;}
+        @media print{body{margin:0;}}
+        @page{margin:15mm;}
+      </style>
+      </head><body>${html}</body></html>`;
+    const blob = new Blob([conteudo], {type:"text/html;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, "_blank");
     if (w) {
-      w.document.open();
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-        <title>Relatório</title>
-        <style>body{margin:0;padding:0;font-family:Arial,sans-serif;} @media print{body{margin:0;}}</style>
-        </head><body>${html}</body></html>`);
-      w.document.close();
-      setTimeout(() => { w.focus(); w.print(); }, 500);
+      w.addEventListener("load", () => {
+        setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 300);
+      });
     }
   }
   return (
@@ -186,7 +191,7 @@ function RelModal({ html, onClose }) {
             <button onClick={onClose} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:12}}>✕ Fechar</button>
           </div>
         </div>
-        <div style={{maxHeight:"80vh",overflowY:"auto",padding:8}} dangerouslySetInnerHTML={{__html:html}}/>
+        <div style={{maxHeight:"80vh",overflowY:"auto",padding:16}} dangerouslySetInnerHTML={{__html:html}}/>
       </div>
     </div>
   );
