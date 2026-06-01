@@ -1410,16 +1410,44 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
     if (fLoc!=="todos") list=list.filter(o=>o.localTrabalho===fLoc);
     if (fSit!=="todos") {
       const todayStr2 = new Date().toISOString().slice(0,10);
-      // For JMS and Atestado, check afastamentos (situacao field may be "Ativo")
-      if (fSit==="Junta Médica") {
-        const jmsSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Junta Médica"&&!a.concluido).map(a=>a.policialId));
-        list = list.filter(o=>jmsSet.has(o.id)||(o.situacao||"Ativo")==="Junta Médica");
-      } else if (fSit==="Atestado") {
-        const atestSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Atestado"&&!a.concluido&&a.dataInicio<=todayStr2&&(!a.dataFim||a.dataFim>=todayStr2)).map(a=>a.policialId));
-        list = list.filter(o=>atestSet.has(o.id)||(o.situacao||"Ativo")==="Atestado");
-      } else if (fSit==="Restrição Médica") {
-        const restSet = new Set((afastamentos||[]).filter(a=>a.tipo==="Restrição Médica"&&!a.concluido).map(a=>a.policialId));
-        list = list.filter(o=>restSet.has(o.id)||(o.situacao||"Ativo")==="Restrição Médica");
+      // Build sets of policialIds per situação cruzando com todos os módulos
+      const afast = afastamentos||[];
+
+      // Férias: policial está em plano de férias com status em_andamento ou com datas abrangendo hoje
+      const ferIdsSet = new Set();
+      (ferias||[]).forEach(plano=>{
+        (plano.participantes||[]).forEach(p=>{
+          if (!p.policialId) return;
+          const ini = p.dataInicio||plano.dataInicio;
+          const fim = p.dataFim||plano.dataFim;
+          if (ini && fim && ini<=todayStr2 && fim>=todayStr2) ferIdsSet.add(p.policialId);
+          else if (plano.status==="em_andamento" && p.policialId) ferIdsSet.add(p.policialId);
+        });
+      });
+
+      const tipoSet = (tipo) => new Set(
+        afast.filter(a=>a.tipo===tipo && !a.concluido &&
+          (!a.dataInicio || a.dataInicio<=todayStr2) &&
+          (!a.dataFim || a.dataFim>=todayStr2)
+        ).map(a=>a.policialId)
+      );
+
+      const sitMap = {
+        "Férias":           ferIdsSet,
+        "Junta Médica":     tipoSet("Junta Médica"),
+        "Atestado":         tipoSet("Atestado"),
+        "Restrição Médica": tipoSet("Restrição Médica"),
+        "Licença Maternidade": tipoSet("Licença Maternidade"),
+        "Licença Paternidade": tipoSet("Licença Paternidade"),
+        "Licença Prêmio":   tipoSet("Licença Prêmio"),
+        "Luto":             tipoSet("Luto"),
+        "Núpcias":          tipoSet("Núpcias"),
+      };
+
+      if (sitMap[fSit]) {
+        const ids = sitMap[fSit];
+        // Also fallback to officer.situacao field
+        list = list.filter(o=>ids.has(o.id)||(o.situacao||"Ativo")===fSit);
       } else {
         list = list.filter(o=>(o.situacao||"Ativo")===fSit);
       }
@@ -1439,7 +1467,7 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
       });
     }
     return list.sort(rankSort);
-  }, [officers, afastamentos, search, fRank, fSexo, fLoc, fSit, fOrigem, fAtivo, filterIds, sortByAnt]);
+  }, [officers, afastamentos, ferias, search, fRank, fSexo, fLoc, fSit, fOrigem, fAtivo, filterIds, sortByAnt]);
 
   function saveNew(form) {
     if (!form.nome||!form.matricula) { alert("Nome e matrícula obrigatórios."); return; }
