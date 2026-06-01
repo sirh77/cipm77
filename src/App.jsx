@@ -103,6 +103,30 @@ function SitBadge({ sit }) {
   return <Badge color={bg} textColor={fg}>{sit}</Badge>;
 }
 
+// Calcula situação real do policial cruzando módulos (férias, afastamentos)
+function getSituacaoReal(officer, afastamentos, ferias) {
+  if (!officer) return "Ativo";
+  const today = new Date().toISOString().slice(0,10);
+  const emFerias = (ferias||[]).some(pl=>
+    (pl.participantes||[]).some(p=>{
+      if (p.policialId!==officer.id) return false;
+      const ini=p.dataInicio||pl.dataInicio; const fim=p.dataFim||pl.dataFim;
+      return (ini&&fim&&ini<=today&&fim>=today)||(pl.status==="em_andamento");
+    })
+  );
+  if (emFerias) return "Férias";
+  const afast=(afastamentos||[]).filter(a=>
+    a.policialId===officer.id&&!a.concluido&&
+    (!a.dataInicio||a.dataInicio<=today)&&(!a.dataFim||a.dataFim>=today)
+  );
+  if (afast.length>0) {
+    const prio=["Junta Médica","Restrição Médica","Atestado","Licença Maternidade","Licença Paternidade","Licença Prêmio","Luto","Núpcias"];
+    for (const p of prio) { if (afast.some(a=>a.tipo===p)) return p; }
+    return afast[0].tipo;
+  }
+  return officer.situacao||"Ativo";
+}
+
 function Card({ children, style={} }) {
   return <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:16,...style}}>{children}</div>;
 }
@@ -161,23 +185,28 @@ function Modal({ title, onClose, children, wide=false }) {
   );
 }
 
-// RelModal: exibe HTML gerado e permite imprimir
+// RelModal: exibe HTML gerado e permite imprimir via Blob URL
 function RelModal({ html, onClose }) {
   function imprimir() {
-    const conteudo = `<!DOCTYPE html><html><head><meta charset="utf-8">
+    // html já é documento completo (começa com <!DOCTYPE) ou fragmento
+    const isDoc = html.trim().startsWith("<!DOCTYPE") || html.trim().startsWith("<html");
+    const conteudo = isDoc ? html : `<!DOCTYPE html><html><head><meta charset="utf-8">
       <title>Relatório SiRH77</title>
       <style>
-        body{margin:20px;font-family:Arial,sans-serif;}
-        @media print{body{margin:0;}}
-        @page{margin:15mm;}
-      </style>
-      </head><body>${html}</body></html>`;
+        @page{size:A4;margin:25mm 30mm 25mm 30mm;}
+        body{font-family:Arial,sans-serif;font-size:12px;margin:0;padding:16px;}
+        @media print{body{margin:0;padding:0;}}
+        table{width:100%;border-collapse:collapse;font-size:11px;}
+        th{background:#f0f4ff;padding:5px 8px;border:1px solid #ccc;}
+        td{padding:4px 8px;border:1px solid #ddd;}
+        tr:nth-child(even) td{background:#f9f9f9;}
+      </style></head><body>${html}</body></html>`;
     const blob = new Blob([conteudo], {type:"text/html;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const w = window.open(url, "_blank");
     if (w) {
       w.addEventListener("load", () => {
-        setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 300);
+        setTimeout(() => { w.print(); URL.revokeObjectURL(url); }, 400);
       });
     }
   }
@@ -410,6 +439,17 @@ function AlertaBanner({ cor, borda, icone, titulo, linhas, chaveStorage, loggedU
 }
 
 function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoSaude, onGoEfetivo, loggedUser, locations }) {
+  const mesAtual = new Date().getMonth()+1;
+  const mesNome = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mesAtual-1];
+  const aniversariantes = (officers||[]).filter(o=>{
+    if (!o.dataNasc) return false;
+    const m = parseInt((o.dataNasc||"").split("-")[1]);
+    return m===mesAtual;
+  }).sort((a,b)=>{
+    const da=parseInt((a.dataNasc||"").split("-")[2]);
+    const db=parseInt((b.dataNasc||"").split("-")[2]);
+    return da-db;
+  });
   // Só conta efetivo ativo (não transferido/reserva)
   const ativos = officers.filter(o=>o.situacao!=="Transferido"&&o.situacao!=="Reserva/Inativo");
   const total = ativos.length;
@@ -432,7 +472,7 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
   // Férias: conta quem está em gozo de férias HOJE baseado nas datas reais
   const hoje = new Date();
   const todayStr = hoje.toISOString().slice(0,10);
-  const mesAtual = hoje.getMonth()+1;
+  const mesAtualDash = hoje.getMonth()+1;
   const anoAtual = hoje.getFullYear();
 
   // Férias: participantes com datas que incluem hoje E tipo FÉRIAS
@@ -440,7 +480,7 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
   const feriasPoliciais = (() => {
     const ids = new Set();
     (feriasList||[])
-      .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtual&&f.ano===anoAtual)
+      .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtualDash&&f.ano===anoAtual)
       .forEach(plan=>{
         (plan.participantes||[])
           .filter(p=>
@@ -457,7 +497,7 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
   const licPremioPoliciais = (() => {
     const ids = new Set();
     (feriasList||[])
-      .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtual&&f.ano===anoAtual)
+      .filter(f=>f.tipo==="planejamento"&&!f.concluido&&f.mes===mesAtualDash&&f.ano===anoAtual)
       .forEach(plan=>{
         (plan.participantes||[])
           .filter(p=>
@@ -730,6 +770,33 @@ function Dashboard({ officers, ferias: feriasList, afastamentos, onFilter, onGoS
         </Card>
       </div>
 
+      {/* Aniversariantes do mês */}
+      {aniversariantes.length>0 && (
+        <Card style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:14,color:"#374151"}}>🎂 Aniversariantes — {mesNome}</div>
+            <Badge color="#fce7f3" textColor="#9d174d">{aniversariantes.length}</Badge>
+          </div>
+          <details>
+            <summary style={{fontSize:12,color:"#6b7280",cursor:"pointer"}}>Ver os {aniversariantes.length} aniversariante(s)</summary>
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:3}}>
+              {aniversariantes.map(o=>{
+                const dia=parseInt((o.dataNasc||"").split("-")[2]);
+                const hoje=new Date().getDate();
+                const isHoje=dia===hoje;
+                return (
+                  <div key={o.id} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",borderRadius:6,background:isHoje?"#fce7f3":"transparent"}}>
+                    <span style={{fontSize:12,fontWeight:600,color:"#9d174d",minWidth:22,textAlign:"right"}}>{String(dia).padStart(2,"0")}</span>
+                    <span style={{fontSize:12,color:"#374151",flex:1}}>{o.grau} {o.nome.toUpperCase()}</span>
+                    {isHoje&&<span style={{fontSize:11}}>🎉</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        </Card>
+      )}
+
       <Card>
         <div style={{fontWeight:600,fontSize:14,marginBottom:12}}>Situação do efetivo</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
@@ -881,6 +948,7 @@ function FormPolicial({ initial={}, onSave, onCancel, locations }) {
 function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, corregedoria, cursos, vantagens, promocoes, setPromocoes, onOpenPlan }) {
   const [tab, setTab] = useState("pessoal");
   const [relHtml, setRelHtml] = useState("");
+  const [modalProm, setModalProm] = useState(null); // {data, posto, bgo}
   const tabs = [
     {id:"pessoal",label:"Dados Pessoais"},
     {id:"funcional",label:"Funcional"},
@@ -1053,8 +1121,9 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
     html += tbl(["Categoria","Tipo/Função","Data Início","BIO Início","Data Fim","BIO Fim"], linhasV);
 
     // RODAPÉ
-    html += `<div style="margin-top:28px;border-top:1px solid #ccc;padding-top:8px;font-style:italic;font-size:10px;color:#555;text-align:right;font-family:Arial,sans-serif;">
-      Relatório emitido em ${dataEmissao} às ${horaEmissao}</div>`;
+    const emit = loggedUser ? `${loggedUser.grau||""} ${loggedUser.nome||""}, Matrícula ${cleanMat(loggedUser.matricula||"")}` : "Sistema";
+    html += `<div style="margin-top:28px;border-top:1px solid #ccc;padding-top:8px;font-style:italic;font-size:10px;color:#555;font-family:Arial,sans-serif;">
+      Relatório emitido por ${emit} em ${dataEmissao} às ${horaEmissao} — SiRH77</div>`;
 
     setRelHtml(html);
   }
@@ -1147,18 +1216,44 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <span style={{fontSize:13,fontWeight:600,color:"#1e3a5f"}}>🎖️ Promoções</span>
                   {(perm.editarTudo||perm.efetivo) && (
-                    <button onClick={()=>{
-                      const data = prompt("Data da promoção (DD/MM/AAAA):");
-                      if (!data) return;
-                      const posto = prompt("Posto/graduação para:");
-                      if (!posto) return;
-                      const dataPub = prompt("Data de publicação (DD/MM/AAAA):");
-                      const bgo = prompt('Número do BGO (ex: "BGO Nº 161 DE 22/08/2024"):');
-                      const nova = {id:Date.now(), policialId:officer.id, data, posto, dataPub:dataPub||"", bgo:bgo||""};
-                      setPromocoes(ps=>[...ps, nova]);
-                    }} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",fontWeight:500}}>+ Adicionar</button>
+                    <button onClick={()=>setModalProm({data:"",posto:officer.grau,bgo:""})}
+                      style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",fontWeight:500}}>+ Adicionar</button>
                   )}
                 </div>
+                {modalProm && (
+                  <div style={{background:"#f0f4ff",borderRadius:8,padding:12,marginBottom:10,border:"1px solid #c7d7f9"}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#1e3a5f",marginBottom:8}}>Nova promoção</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                      <div>
+                        <div style={{fontSize:11,color:"#6b7280",marginBottom:3}}>Data da promoção</div>
+                        <input type="date" value={modalProm.data} onChange={e=>setModalProm(m=>({...m,data:e.target.value}))}
+                          style={{width:"100%",padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,boxSizing:"border-box"}}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:"#6b7280",marginBottom:3}}>Grau promovido para</div>
+                        <select value={modalProm.posto} onChange={e=>setModalProm(m=>({...m,posto:e.target.value}))}
+                          style={{width:"100%",padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,background:"#fff",boxSizing:"border-box"}}>
+                          {RANK_ORDER.map(r=><option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{marginBottom:8}}>
+                      <div style={{fontSize:11,color:"#6b7280",marginBottom:3}}>Número do BGO</div>
+                      <input value={modalProm.bgo} onChange={e=>setModalProm(m=>({...m,bgo:e.target.value}))}
+                        placeholder="Ex: BGO Nº 161 DE 22/08/2024"
+                        style={{width:"100%",padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,boxSizing:"border-box"}}/>
+                    </div>
+                    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                      <button onClick={()=>setModalProm(null)} style={{padding:"5px 12px",border:"1px solid #d1d5db",borderRadius:6,background:"#fff",cursor:"pointer",fontSize:12}}>Cancelar</button>
+                      <button onClick={()=>{
+                        if (!modalProm.data||!modalProm.posto) return;
+                        const nova={id:Date.now(),policialId:officer.id,data:modalProm.data,posto:modalProm.posto,bgo:modalProm.bgo||""};
+                        setPromocoes(ps=>[...ps,nova]);
+                        setModalProm(null);
+                      }} style={{padding:"5px 12px",background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>💾 Salvar</button>
+                    </div>
+                  </div>
+                )}
                 {(promocoes||[]).filter(p=>p.policialId===officer.id).length===0
                   ? <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Nenhuma promoção registrada.</p>
                   : [...(promocoes||[]).filter(p=>p.policialId===officer.id)]
@@ -1168,7 +1263,7 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
                         <div style={{flex:1}}>
                           <div style={{fontSize:13,fontWeight:600,color:"#1e3a5f"}}>{p.posto}</div>
                           <div style={{fontSize:11,color:"#6b7280"}}>
-                            Promoção: {p.data}
+                            Promoção: {fmtDate(p.data)}
                             {p.dataPub && <span> · Publicação: {p.dataPub}</span>}
                             {p.bgo && <span> · <em>{p.bgo}</em></span>}
                           </div>
@@ -1295,20 +1390,19 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
               {[...mCursos].sort((a,b)=>(b.dataInicio||"").localeCompare(a.dataInicio||"")).map(c=>{
                 const part=(c.participantes||[]).find(p=>p.policialId===id);
                 if(!part) return null;
+                const status = c.concluido ? "Concluído" : "Em andamento";
+                const [sbg, sfg] = c.concluido ? ["#dcfce7","#15803d"] : ["#fef3c7","#92400e"];
                 return (
                   <div key={c.id} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:12,marginBottom:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                       <span style={{fontWeight:600,fontSize:13}}>🎓 {c.nome}</span>
-                      {c.concluido && <Badge color="#dcfce7" textColor="#15803d">Concluído</Badge>}
+                      <Badge color={sbg} textColor={sfg}>{status}</Badge>
                     </div>
                     <div style={{fontSize:12,color:"#6b7280",marginBottom:6}}>{fmtDate(c.dataInicio)}{c.dataFim?" → "+fmtDate(c.dataFim):""}{c.local?" · "+c.local:""}{c.cargaHoraria?" · "+c.cargaHoraria+"h":""}</div>
-                    <Badge color={part.aprovado===true?"#dcfce7":part.aprovado===false?"#fee2e2":part.finalizado?"#f3f4f6":"#fef3c7"}
-                      textColor={part.aprovado===true?"#15803d":part.aprovado===false?"#991b1b":part.finalizado?"#374151":"#92400e"}>
-                      {part.aprovado===true?"✅ Aprovado":part.aprovado===false?"❌ Reprovado":part.finalizado?"Finalizado":"Em andamento"}
-                    </Badge>
                     {part.bgo&&<div style={{fontSize:11,color:"#6b7280",marginTop:4}}>{part.bgo}</div>}
                   </div>
                 );
+              })}
               })}
             </div>
           )}
@@ -1602,7 +1696,7 @@ function ModEfetivo({ officers, setOfficers, perm, locations, ferias, afastament
               <div style={{fontSize:11,color:"#6b7280",marginTop:1}}>Mat. {cleanMat(o.matricula)||"-"}</div>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
-              <SitBadge sit={o.situacao||"Ativo"}/>
+              <SitBadge sit={getSituacaoReal(o, afastamentos, ferias)}/>
               {o.sexo==="FEM"&&<Badge color="#fce7f3" textColor="#9d174d" size={10}>F</Badge>}
             </div>
           </div>
@@ -2807,67 +2901,90 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
   const [relHtml, setRelHtml] = useState("");
   const [modalRelSaude, setModalRelSaude] = useState(false);
   const [relOfficer, setRelOfficer] = useState(null);
+  const TIPOS_SAUDE_REL = ["Junta Médica","Atestado","Restrição Médica","Licença Maternidade","Licença Paternidade","Licença Prêmio","Luto","Núpcias"];
+  const [relSaudeConfig, setRelSaudeConfig] = useState({tipos:["Junta Médica","Atestado","Restrição Médica"],apenasAtivos:true,ini:"",fim:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const cab = () => `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 32px;">
-    <div style="text-align:center;margin-bottom:16px;font-weight:bold;font-size:11px;line-height:2;text-transform:uppercase;">
-      POLÍCIA MILITAR DA BAHIA<br/>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br/>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR
-    </div>`;
-  const rod = () => `<div style="margin-top:24px;border-top:1px solid #ccc;padding-top:8px;font-size:10px;color:#555;text-align:right;font-style:italic;">
-    Relatório emitido em ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")} — SiRH77</div></div>`;
+
+  // ── Helpers de relatório (padrão A4) ─────────────────────────────────────
+  // CSS padrão A4 para relatórios
+  const REL_CSS = [
+    "<style>",
+    "@page{size:A4;margin:25mm 30mm 25mm 30mm;}",
+    "body{font-family:Arial,sans-serif;font-size:12px;margin:0;padding:0;color:#111;}",
+    ".cab{text-align:center;font-weight:bold;font-size:11px;line-height:1.9;text-transform:uppercase;margin-bottom:12px;}",
+    ".tit{text-align:center;font-size:13px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:7px 0;margin-bottom:16px;}",
+    ".sec{background:#1e3a5f;color:#fff;padding:5px 10px;font-weight:bold;font-size:11px;margin:14px 0 6px;}",
+    "table{width:100%;border-collapse:collapse;font-size:11px;}",
+    "th{background:#f0f4ff;padding:5px 8px;text-align:left;border:1px solid #ccc;font-weight:600;}",
+    "td{padding:4px 8px;border:1px solid #ddd;vertical-align:top;}",
+    "tr:nth-child(even) td{background:#f9f9f9;}",
+    ".rod{margin-top:30px;border-top:1px solid #ccc;padding-top:6px;font-size:10px;color:#555;font-style:italic;}",
+    "</style>"
+  ].join("");
+
+  function relCab(titulo) {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + titulo + "</title>"
+      + REL_CSS + "</head><body>"
+      + "<div class=\"cab\">POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>"
+      + "<div class=\"tit\">" + titulo + "</div>";
+  }
+  function relRod() {
+    const agora = new Date();
+    const emit = loggedUser ? ((loggedUser.grau||"")+" "+(loggedUser.nome||"")+", Matrícula "+cleanMat(loggedUser.matricula||"")) : "Sistema";
+    const dataHora = agora.toLocaleDateString("pt-BR") + " às " + agora.toLocaleTimeString("pt-BR");
+    return "<div class=\"rod\">Relatório emitido por " + emit + " em " + dataHora + " — SiRH77</div></body></html>";
+  }
+  function relImprimir(html) {
+    const blob = new Blob([html],{type:"text/html;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url,"_blank");
+    if(w) w.addEventListener("load",()=>{ setTimeout(()=>{ w.print(); URL.revokeObjectURL(url); },400); });
+  }
 
   function gerarRelSaude(modo, officerFiltro) {
-    const hoje2 = new Date().toLocaleDateString("pt-BR");
-    const lista = afastamentosCorrigidos.filter(a => {
-      if (a.concluido) return false;
-      if (officerFiltro && a.policialId !== officerFiltro.id) return false;
+    // Filtros vêm do modal: relSaudeConfig = {tipos:[], ativo:bool, ini:"", fim:""}
+    const cfg = relSaudeConfig;
+    const tipos = cfg.tipos.length>0 ? cfg.tipos : ["Junta Médica","Atestado","Restrição Médica","Licença Maternidade","Licença Paternidade","Licença Prêmio","Luto","Núpcias"];
+    const getO = id => officers.find(o=>o.id===id);
+
+    let lista = [...afastamentosCorrigidos].filter(a=>{
+      if (!tipos.includes(a.tipo)) return false;
+      if (cfg.apenasAtivos && a.concluido) return false;
+      if (officerFiltro && a.policialId!==officerFiltro.id) return false;
+      // Filtro por período: a.dataInicio dentro do intervalo
+      if (cfg.ini && a.dataInicio && a.dataInicio < cfg.ini) return false;
+      if (cfg.fim && a.dataInicio && a.dataInicio > cfg.fim) return false;
       return true;
     }).sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
 
-    const getO = id => officers.find(o=>o.id===id);
-
-    let html = cab();
     const titulo = officerFiltro
       ? `RELATÓRIO DE SAÚDE — ${officerFiltro.grau} ${officerFiltro.nome}`
-      : "RELATÓRIO GERAL DE SAÚDE / AFASTAMENTOS";
-    html += `<div style="text-align:center;font-size:14px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:8px 0;margin-bottom:16px;">${titulo}</div>`;
-    html += `<p style="font-size:11px;color:#555;margin-bottom:12px;">Data de emissão: ${hoje2} — Total de registros ativos: ${lista.length}</p>`;
+      : (cfg.apenasAtivos ? "RELATÓRIO DE AFASTAMENTOS ATIVOS" : "RELATÓRIO GERAL DE SAÚDE / AFASTAMENTOS");
 
-    // Group by type
-    const tipos = [...new Set(lista.map(a=>a.tipo))].sort();
-    if (lista.length === 0) {
-      html += `<p style="font-size:12px;color:#555;">Nenhum afastamento ativo encontrado.</p>`;
-    }
+    let html = relCab(titulo);
+    const periodo = cfg.ini||cfg.fim ? `Período: ${cfg.ini?new Date(cfg.ini+"T12:00:00").toLocaleDateString("pt-BR"):"início"} a ${cfg.fim?new Date(cfg.fim+"T12:00:00").toLocaleDateString("pt-BR"):"hoje"}` : "Todos os registros";
+    html += `<p style="font-size:11px;color:#555;margin-bottom:12px;">${periodo} — ${lista.length} registro(s)</p>`;
+
     for (const tipo of tipos) {
-      const grupo = lista.filter(a=>a.tipo===tipo);
-      html += `<div style="margin-bottom:16px;">
-        <div style="font-weight:bold;font-size:12px;background:#1e3a5f;color:#fff;padding:5px 10px;margin-bottom:4px;">${tipo} (${grupo.length})</div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead><tr style="background:#f0f4ff;">
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Grau/Nome</th>
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Matrícula</th>
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Início</th>
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Fim/Previsão</th>
-            <th style="padding:5px 8px;text-align:left;border:1px solid #ddd;">Observação</th>
-          </tr></thead><tbody>`;
-      grupo.forEach((a,i) => {
-        const o = getO(a.policialId);
-        const bg = i%2===0?"#fff":"#f9f9f9";
-        html += `<tr style="background:${bg};">
-          <td style="padding:4px 8px;border:1px solid #ddd;">${o?`${o.grau} ${o.nome}`:"—"}</td>
-          <td style="padding:4px 8px;border:1px solid #ddd;">${o?o.matricula:"—"}</td>
-          <td style="padding:4px 8px;border:1px solid #ddd;">${a.dataInicio?new Date(a.dataInicio+"T12:00:00").toLocaleDateString("pt-BR"):"—"}</td>
-          <td style="padding:4px 8px;border:1px solid #ddd;">${a.dataFim?new Date(a.dataFim+"T12:00:00").toLocaleDateString("pt-BR"):a.novaInspDia?`Próx. JMS: ${new Date(a.novaInspDia+"T12:00:00").toLocaleDateString("pt-BR")}`:"Em aberto"}</td>
-          <td style="padding:4px 8px;border:1px solid #ddd;">${a.parecer||a.cid||a.restricao||a.descricao||"—"}</td>
-        </tr>`;
+      const grupo = lista.filter(a=>a.tipo===tipo).sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
+      if (!grupo.length) continue;
+      html += `<div class="sec">${tipo} (${grupo.length})</div>`;
+      html += `<table><thead><tr><th>Grau / Nome</th><th>Matrícula</th><th>Início</th><th>Fim / Previsão</th><th>Situação</th><th>Observação</th></tr></thead><tbody>`;
+      grupo.forEach(a=>{
+        const o=getO(a.policialId);
+        const fim = a.dataFim ? new Date(a.dataFim+"T12:00:00").toLocaleDateString("pt-BR") : a.novaInspDia ? `Próx. JMS: ${new Date(a.novaInspDia+"T12:00:00").toLocaleDateString("pt-BR")}` : "Em aberto";
+        html += `<tr><td>${o?`${o.grau} ${o.nome}`:"—"}</td><td>${o?o.matricula:"—"}</td><td>${a.dataInicio?new Date(a.dataInicio+"T12:00:00").toLocaleDateString("pt-BR"):"—"}</td><td>${fim}</td><td>${a.concluido?"Concluído":"Ativo"}</td><td>${a.parecer||a.cid||a.restricao||a.descricao||"—"}</td></tr>`;
       });
-      html += `</tbody></table></div>`;
+      html += `</tbody></table>`;
     }
-    html += rod();
+    if (lista.length===0) html += `<p style="font-size:12px;color:#555;text-align:center;padding:20px;">Nenhum registro encontrado para os filtros selecionados.</p>`;
+    html += relRod();
     setRelHtml(html);
     setModalRelSaude(false);
     setRelOfficer(null);
   }
+
 
   // Prazos automáticos por tipo
   const PRAZOS = {
@@ -3105,21 +3222,42 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
       {/* RelModal */}
       {relHtml && <RelModal html={relHtml} onClose={()=>setRelHtml("")}/>}
 
-      {/* Modal relatório individual */}
+      {/* Modal relatório de saúde */}
       {modalRelSaude && (
-        <Modal title="Relatório Individual de Saúde" onClose={()=>setModalRelSaude(false)}>
-          <p style={{fontSize:13,color:"#374151",marginBottom:12}}>Selecione o policial para gerar o relatório:</p>
-          <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{setRelOfficer(o);}}/>
-          {relOfficer && (
-            <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginTop:8,fontSize:13}}>
-              <strong>{relOfficer.grau} {relOfficer.nome}</strong>
+        <Modal title="Relatório de Saúde" onClose={()=>setModalRelSaude(false)} wide>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <Input label="Data início (período)" type="date" value={relSaudeConfig.ini} onChange={e=>setRelSaudeConfig(c=>({...c,ini:e.target.value}))}/>
+            <Input label="Data fim (período)" type="date" value={relSaudeConfig.fim} onChange={e=>setRelSaudeConfig(c=>({...c,fim:e.target.value}))}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Tipos de afastamento</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {TIPOS_SAUDE_REL.map(t=>(
+                <label key={t} style={{display:"flex",alignItems:"center",gap:5,fontSize:12,cursor:"pointer",background:relSaudeConfig.tipos.includes(t)?"#dbeafe":"#f3f4f6",padding:"4px 10px",borderRadius:6,border:`1px solid ${relSaudeConfig.tipos.includes(t)?"#3b82f6":"#e5e7eb"}`}}>
+                  <input type="checkbox" checked={relSaudeConfig.tipos.includes(t)} onChange={e=>{
+                    setRelSaudeConfig(c=>({...c,tipos:e.target.checked?[...c.tipos,t]:c.tipos.filter(x=>x!==t)}));
+                  }}/> {t}
+                </label>
+              ))}
             </div>
-          )}
+            <div style={{display:"flex",gap:8,marginTop:6}}>
+              <button onClick={()=>setRelSaudeConfig(c=>({...c,tipos:[...TIPOS_SAUDE_REL]}))} style={{fontSize:11,border:"none",background:"none",color:"#1d4ed8",cursor:"pointer",textDecoration:"underline"}}>Selecionar todos</button>
+              <button onClick={()=>setRelSaudeConfig(c=>({...c,tipos:[]}))} style={{fontSize:11,border:"none",background:"none",color:"#6b7280",cursor:"pointer",textDecoration:"underline"}}>Limpar</button>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <input type="checkbox" id="apenasAtivos" checked={relSaudeConfig.apenasAtivos} onChange={e=>setRelSaudeConfig(c=>({...c,apenasAtivos:e.target.checked}))}/>
+            <label htmlFor="apenasAtivos" style={{fontSize:12,cursor:"pointer"}}>Apenas afastamentos ativos (excluir concluídos)</label>
+          </div>
+          <div style={{borderTop:"1px solid #e5e7eb",paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Relatório individual (opcional)</div>
+            <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>setRelOfficer(o)}/>
+            {relOfficer && <div style={{background:"#f0f4ff",borderRadius:6,padding:"6px 10px",fontSize:12,marginTop:6}}><strong>{relOfficer.grau} {relOfficer.nome}</strong> — relatório individual</div>}
+            {relOfficer && <button onClick={()=>setRelOfficer(null)} style={{fontSize:11,border:"none",background:"none",color:"#dc2626",cursor:"pointer",marginTop:4}}>✕ Remover seleção (gerar geral)</button>}
+          </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
             <Btn variant="secondary" onClick={()=>setModalRelSaude(false)}>Cancelar</Btn>
-            <Btn onClick={()=>gerarRelSaude("individual", relOfficer)} disabled={!relOfficer}>
-              📋 Gerar relatório
-            </Btn>
+            <Btn onClick={()=>gerarRelSaude("modal", relOfficer||null)}>📋 Gerar relatório</Btn>
           </div>
         </Modal>
       )}
@@ -3127,8 +3265,7 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Saúde / Afastamentos</h2>
         <div style={{display:"flex",gap:8}}>
-          <Btn small variant="secondary" onClick={()=>gerarRelSaude("geral")}>📋 Rel. geral</Btn>
-          <Btn small variant="secondary" onClick={()=>setModalRelSaude(true)}>👤 Rel. individual</Btn>
+          <Btn small variant="secondary" onClick={()=>{setRelOfficer(null);setModalRelSaude(true);}}>📋 Relatório</Btn>
           <Btn onClick={()=>{setForm({policialId:"",tipo:"Atestado",dataInicio:"",aContarDe:"",afastamento:"",dataFim:"",novaInspDia:"",parecer:"",restricao:"",cid:"",medico:"",hospital:"",crm:"",descricao:"",concluido:false,dataCasamento:"",nomeConjuge:"",nomeFilho:"",dataNascFilho:"",certidaoNasc:"",cpfFilho:"",parentesco:"",nomeFalecido:"",dataObito:"",registroObito:""});setModal({mode:"new"});}}>+ Registrar</Btn>
         </div>
       </div>
@@ -4053,6 +4190,7 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
   const [confirm, setConfirm] = useState(null);
   const [masfOfficer, setMasfOfficer] = useState(null);
   const [masfData, setMasfData] = useState(null);
+  const [relVantHtml, setRelVantHtml] = useState("");
   // Modal de edição em massa por tipo
   const [modalEditar, setModalEditar] = useState(null); // {tipo, categoria} ex: {tipo:"4 Rodas", categoria:"cet"}
   const [buscaEdicao, setBuscaEdicao] = useState("");
@@ -4180,6 +4318,36 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
     );
   }
 
+
+  function gerarRelVantagens() {
+    const agora = new Date();
+    const emit = loggedUser ? (loggedUser.grau||"") + " " + (loggedUser.nome||"") + ", Matrícula " + cleanMat(loggedUser.matricula||"") : "Sistema";
+    const dataHora = agora.toLocaleDateString("pt-BR") + " às " + agora.toLocaleTimeString("pt-BR");
+    const titulo = "RELATÓRIO DE VANTAGENS ATIVAS";
+    const css = "<style>@page{size:A4;margin:25mm 30mm 25mm 30mm;}body{font-family:Arial,sans-serif;font-size:12px;margin:0;padding:0;}.cab{text-align:center;font-weight:bold;font-size:11px;line-height:1.9;text-transform:uppercase;margin-bottom:12px;}.tit{text-align:center;font-size:13px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:7px 0;margin-bottom:16px;}.sec{background:#1e3a5f;color:#fff;padding:5px 10px;font-weight:bold;font-size:11px;margin:14px 0 6px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#f0f4ff;padding:5px 8px;text-align:left;border:1px solid #ccc;}td{padding:4px 8px;border:1px solid #ddd;}.rod{margin-top:30px;border-top:1px solid #ccc;padding-top:6px;font-size:10px;color:#555;font-style:italic;}</style>";
+    var html = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + titulo + "</title>" + css + "</head><body>";
+    html += "<div class='cab'>POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>";
+    html += "<div class='tit'>" + titulo + "</div>";
+    html += "<p style='font-size:11px;color:#555;margin-bottom:12px;'>Emissão: " + agora.toLocaleDateString("pt-BR") + " — Total ativo: " + vantAtivas.length + " vantagem(ns)</p>";
+    var grupos = [{lista:cet4,tit:"CET 4 RODAS (85%)"},{lista:cet2,tit:"CET 2 RODAS (105%)"},{lista:substs,tit:"SUBSTITUIÇÃO DE FUNÇÃO"}];
+    grupos.forEach(function(g) {
+      if (!g.lista.length) return;
+      var rows = g.lista.map(function(v) {
+        var o = getOfficer(v.policialId);
+        if (!o) return "";
+        var ini = v.dataInicio ? new Date(v.dataInicio+"T12:00:00").toLocaleDateString("pt-BR") : "—";
+        return "<tr><td>" + o.grau + "</td><td>" + o.nome.toUpperCase() + "</td><td>" + cleanMat(o.matricula) + "</td><td>" + ini + "</td><td>" + (v.bio||"—") + "</td></tr>";
+      }).join("");
+      html += "<div class='sec'>" + g.tit + " — " + g.lista.length + " policial(is)</div>";
+      html += "<table><thead><tr><th>G.H.</th><th>Nome</th><th>Matrícula</th><th>Início</th><th>BGO</th></tr></thead><tbody>" + rows + "</tbody></table>";
+    });
+    html += "<div class='rod'>Relatório emitido por " + emit + " em " + dataHora + " — SiRH77</div></body></html>";
+    var blob = new Blob([html],{type:"text/html;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var w = window.open(url,"_blank");
+    if(w) w.addEventListener("load",function(){ setTimeout(function(){ w.print(); URL.revokeObjectURL(url); },400); });
+  }
+
   return (
     <div>
       {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
@@ -4267,9 +4435,12 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <h2 style={{fontSize:18,fontWeight:700,color:"#111827",margin:0}}>Vantagens</h2>
-        <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
-          <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Listas</button>
-          <button onClick={()=>setAba("historico")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="historico"?600:400,background:aba==="historico"?"#374151":"transparent",color:aba==="historico"?"#fff":"#374151"}}>🗂 Histórico</button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <Btn small variant="secondary" onClick={gerarRelVantagens}>🖨️ Relatório</Btn>
+          <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
+            <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Listas</button>
+            <button onClick={()=>setAba("historico")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="historico"?600:400,background:aba==="historico"?"#374151":"transparent",color:aba==="historico"?"#fff":"#374151"}}>🗂 Histórico</button>
+          </div>
         </div>
       </div>
 
