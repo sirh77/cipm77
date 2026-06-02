@@ -4,7 +4,7 @@
     VITE_SUPABASE_URL=https://seu-projeto.supabase.co
     VITE_SUPABASE_ANON_KEY=sua-chave-anon
 */
-import { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useSupabaseState, useGlobalLoading } from "./useSupabase.js";
 import { isConfigured } from "./supabase.js";
 
