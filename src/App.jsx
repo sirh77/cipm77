@@ -4223,32 +4223,32 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
   function addMembro(eid, gId, pid) {
     setEscalas(es=>es.map(e=> {
       if (e.id!==eid) return e;
-      // Find index of this group among all groups (A=0, B=1, etc)
       const gruposList = ["A","B","C","D","E"];
-      const gi = gruposList.indexOf(gId);
-      const n = gruposList.length; // 5 grupos
+      const gi = gruposList.indexOf(gId); // 0=A,1=B,2=C,3=D,4=E
+      const n = gruposList.length; // 5
       const novasCelulas = {...(e.celulas||{})};
 
-      // Determine legendas baseado no horário da escala
       const legDia   = (e.horaInicio||"").startsWith("06:3") ? "R19" : "C8";
       const legNoite = (e.horaInicio2||"").startsWith("18:3") ? "R20" : "C9";
 
       if (e.tipo==="24x96") {
-        // Grupo gi trabalha quando (d-1-gi) % 5 === 0
+        // Cada grupo trabalha 1 dia e folga 4 (ciclo de 5)
+        // Grupo A: dias 1,6,11,16... Grupo B: dias 2,7,12... etc.
         for (let d=1; d<=diasNoMes; d++) {
-          if ((d-1-gi) % n === 0) {
-            novasCelulas[pid+"_"+d] = legDia;
-          }
+          if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = legDia;
         }
       } else {
-        // 12x24x72: cada dia tem 2 slots. grupo gi pega slot (gi % n)
-        // dia slot: ((d-1)*2) % n === gi → turno dia
-        // noite slot: ((d-1)*2+1) % n === gi → turno noite
+        // 12x24x72: ciclo de 5 dias, cada grupo trabalha 2 dias consecutivos e folga 3
+        // Grupo A: dia1=dia, dia2=noite, folga3,4,5, dia6=dia, dia7=noite...
+        // Grupo B: dia2=dia, dia3=noite, folga4,5,6, dia7=dia...
+        // Grupo C: dia3=dia, dia4=noite, folga5,6,7, dia8=dia...
+        // Padrão: grupo gi trabalha no dia (d) se:
+        //   posição no ciclo = (d-1) % n
+        //   trabalha turno dia  quando (d-1-gi) % n === 0
+        //   trabalha turno noite quando (d-gi) % n === 0  (dia seguinte)
         for (let d=1; d<=diasNoMes; d++) {
-          const cicloD = ((d-1)*2)   % n;
-          const cicloN = ((d-1)*2+1) % n;
-          if (gi === cicloD) novasCelulas[pid+"_"+d] = legDia;
-          if (gi === cicloN) novasCelulas[pid+"_"+d] = legNoite;
+          if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = legDia;      // 1º dia do par
+          if ((d-1-gi-1+n) % n === 0) novasCelulas[pid+"_"+d] = legNoite; // 2º dia do par
         }
       }
 
@@ -4455,6 +4455,12 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
               const membros = g.membros||[];
               if(!membros.length) return null;
               const [bgG]=GRUPO_CORES[g.id]||["#1e3a5f"];
+              // Ordenar por grau hierárquico
+              const membrosOrdenados = [...membros].sort((a,b)=>{
+                const oa=officers.find(x=>x.id===a); const ob=officers.find(x=>x.id===b);
+                if(!oa||!ob) return 0;
+                return rankSort(oa,ob);
+              });
               return (
                 <div key={g.id} style={{marginBottom:18}}>
                   <div style={{background:bgG,color:"#fff",padding:"4px 12px",fontWeight:700,fontSize:12,borderRadius:"6px 6px 0 0"}}>GRUPO {g.id}</div>
@@ -4480,7 +4486,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {membros.map(pid=>{
+                        {membrosOrdenados.map(pid=>{
                           const o=officers.find(x=>x.id===pid); if(!o) return null;
                           const {total,noturno} = calcHorasPolicial(escalaAtual, pid);
                           return (
