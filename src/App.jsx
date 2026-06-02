@@ -4084,6 +4084,713 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
 }
 
 // Módulos do sistema e seus labels
+// ─── MÓDULO GESTÃO DE PELOTÃO ─────────────────────────────────────────────
+const LEGENDAS_ESCALA = {
+  A1:"08h-12h/14h-18h", A11:"22h-06h", A4:"08h-12h/13h-17h",
+  B1:"07h-13h", B2:"13h-19h", C1:"07h-19h", C11:"13h-01h",
+  C2:"19h-07h", C8:"06h-18h", C9:"18h-06h",
+  CR:"Em curso", F:"Férias", F5:"06h-06h", G1:"06h-21h",
+  H5:"09h-01h", JMS:"Junta médica", LP:"Licença Prêmio",
+  M3:"07h30-19h30", R19:"06h30-18h30", R20:"18h30-06h30",
+  R21:"06h-18h", AT:"Atestado", D:"Dispensa",
+  P:"Lic.Paternidade", LM:"Lic.Maternidade",
+};
+
+// Horas de cada legenda
+const HORAS_LEGENDA = {
+  A1:8, A11:8, A4:8, B1:6, B2:6, C1:12, C11:12, C2:12, C8:12, C9:12,
+  F5:24, G1:15, H5:16, M3:12, R19:12, R20:12, R21:12,
+  CR:0, F:0, JMS:0, LP:0, AT:0, D:0, P:0, LM:0,
+};
+
+// Horas noturnas (22h-05h = 7h) por legenda
+const NOTURNO_LEGENDA = {
+  A11:7, C2:7, C11:3, C9:7, R20:7, F5:7,
+};
+
+// Cores dos grupos
+const GRUPO_CORES = {
+  A:["#1e3a5f","#fff"], B:["#15803d","#fff"],
+  C:["#92400e","#fff"], D:["#5b21b6","#fff"], E:["#9d174d","#fff"],
+};
+
+function gerarDiasEscala(mes, ano, tipoEscala, grupos) {
+  // Returns array of {dia, grupos: {A: legenda, B: legenda, ...}}
+  const diasNoMes = new Date(ano, mes, 0).getDate();
+  const result = [];
+
+  if (tipoEscala === "24x96") {
+    // Each group works every 5th day (4 groups working, skip 4, 24h on 96h off)
+    // Group A starts day 1, B day 2, C day 3, D day 4, E day 5
+    const gruposList = Object.keys(grupos).sort();
+    for (let d = 1; d <= diasNoMes; d++) {
+      const entry = {dia: d, grupos: {}};
+      gruposList.forEach((g, gi) => {
+        // In 24x96: group works if (d - 1 - gi) % 5 === 0
+        if ((d - 1 - gi) % 5 === 0) {
+          entry.grupos[g] = grupos[g]?.legenda || "C8";
+        }
+      });
+      result.push(entry);
+    }
+  } else {
+    // 12x24 12x72: groups alternate day/night shifts
+    // G_A: day1 DAY, G_B: day1 NIGHT, G_C: day2 DAY, G_D: day2 NIGHT, G_E: day3 DAY...
+    const gruposList = Object.keys(grupos).sort();
+    const totalGrupos = gruposList.length;
+    for (let d = 1; d <= diasNoMes; d++) {
+      const entry = {dia: d, grupos: {}};
+      gruposList.forEach((g, gi) => {
+        // cycle position: which slot does this group fall in for day d?
+        const slot = ((d - 1) * 2) % totalGrupos; // 2 slots per day
+        const slotDay  = slot;
+        const slotNight = slot + 1;
+        if (gi === slotDay % totalGrupos) {
+          entry.grupos[g] = grupos[g]?.legendaDia || "C8";
+        } else if (gi === slotNight % totalGrupos) {
+          entry.grupos[g] = grupos[g]?.legendaNoite || "C9";
+        }
+      });
+      result.push(entry);
+    }
+  }
+  return result;
+}
+
+function calcHoras(cellMap, diasNoMes) {
+  let total = 0, noturno = 0;
+  for (let d = 1; d <= diasNoMes; d++) {
+    const leg = cellMap[d];
+    if (!leg) continue;
+    total += HORAS_LEGENDA[leg] || 0;
+    noturno += NOTURNO_LEGENDA[leg] || 0;
+  }
+  return {total, noturno};
+}
+
+// ─── PelotãoEscala (aba Escala) ─────────────────────────────────────────────
+function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, afastamentos, ferias }) {
+  const [modalCriar, setModalCriar] = useState(false);
+  const [modalGrupo, setModalGrupo] = useState(null); // {grupoId, escalaId}
+  const [formEscala, setFormEscala] = useState({tipo:"24x96", horaInicio:"06:30", horaFim:"18:30", horaInicio2:"", horaFim2:""});
+  const setFE = (k,v) => setFormEscala(f=>({...f,[k]:v}));
+  const [editCell, setEditCell] = useState(null); // {escalaId, grupoId, dia}
+  const [editLeg, setEditLeg] = useState("");
+
+  const diasNoMes = new Date(ano, mes, 0).getDate();
+  const escala = escalas.find(e => e.pelotaoId === pelotao.id && e.mes === mes && e.ano === ano);
+
+  function criarEscala() {
+    const nova = {
+      id: Date.now(),
+      pelotaoId: pelotao.id,
+      mes, ano,
+      tipo: formEscala.tipo,
+      horaInicio: formEscala.horaInicio,
+      horaFim: formEscala.horaFim,
+      horaInicio2: formEscala.horaInicio2,
+      horaFim2: formEscala.horaFim2,
+      titulo: "ESCALA ORDINÁRIA " + ["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][mes-1] + "/" + ano,
+      grupos: {A:{}, B:{}, C:{}, D:{}, E:{}},
+      celulas: {}, // {grupoId_dia: legenda}
+    };
+    // Pre-fill cells based on schedule type
+    const gruposList = ["A","B","C","D","E"];
+    if (formEscala.tipo === "24x96") {
+      for (let d = 1; d <= diasNoMes; d++) {
+        gruposList.forEach((g, gi) => {
+          if ((d - 1 - gi) % 5 === 0) {
+            nova.celulas[g+"_"+d] = "C8";
+          }
+        });
+      }
+    } else {
+      // 12x24/12x72
+      for (let d = 1; d <= diasNoMes; d++) {
+        gruposList.forEach((g, gi) => {
+          const slotDay   = ((d-1)*2) % gruposList.length;
+          const slotNight = ((d-1)*2+1) % gruposList.length;
+          if (gi === slotDay)   nova.celulas[g+"_"+d] = "C8";
+          if (gi === slotNight) nova.celulas[g+"_"+d] = "C9";
+        });
+      }
+    }
+    setEscalas(es => [...es, nova]);
+    setModalCriar(false);
+  }
+
+  function updateCell(escalaId, grupoId, dia, leg) {
+    setEscalas(es => es.map(e => e.id !== escalaId ? e : {
+      ...e, celulas: {...e.celulas, [grupoId+"_"+dia]: leg || undefined}
+    }));
+  }
+
+  function addPolicial(escalaId, grupoId, policialId) {
+    setEscalas(es => es.map(e => e.id !== escalaId ? e : {
+      ...e,
+      grupos: {...e.grupos, [grupoId]: {...(e.grupos[grupoId]||{}),
+        membros: [...new Set([...((e.grupos[grupoId]?.membros)||[]), policialId])]
+      }}
+    }));
+  }
+
+  function removePolicial(escalaId, grupoId, policialId) {
+    setEscalas(es => es.map(e => e.id !== escalaId ? e : {
+      ...e,
+      grupos: {...e.grupos, [grupoId]: {...(e.grupos[grupoId]||{}),
+        membros: ((e.grupos[grupoId]?.membros)||[]).filter(id => id !== policialId)
+      }}
+    }));
+  }
+
+  const hoje = new Date();
+  const diaHoje = hoje.getDate();
+  const mesHoje = hoje.getMonth()+1;
+  const anoHoje = hoje.getFullYear();
+  const isCurrentMonth = mes === mesHoje && ano === anoHoje;
+
+  // Who's on duty today
+  const emServico = !escala ? [] : Object.entries(escala.grupos).flatMap(([gId, g]) => {
+    if (!(g?.membros?.length)) return [];
+    const leg = escala.celulas[gId+"_"+diaHoje];
+    if (!leg || ["F","JMS","LP","AT","D","P","LM","CR"].includes(leg)) return [];
+    return (g.membros||[]).map(id => ({id, grupo:gId, leg}));
+  });
+
+  const thStyle = {padding:"4px 2px", textAlign:"center", fontSize:10, fontWeight:600, color:"#374151", borderBottom:"2px solid #1e3a5f", minWidth:28, position:"sticky", top:0, background:"#f8faff"};
+  const tdStyle = {padding:"2px", textAlign:"center", fontSize:11, borderBottom:"1px solid #f0f0f0"};
+
+  return (
+    <div>
+      {/* Modal criar escala */}
+      {modalCriar && (
+        <Modal title="Criar escala" onClose={()=>setModalCriar(false)}>
+          <Select label="Tipo de escala" value={formEscala.tipo} onChange={e=>setFE("tipo",e.target.value)}>
+            <option value="24x96">24x96 (24h de serviço, 96h de folga)</option>
+            <option value="12x24x72">12x24 12x72 (dois horários por dia)</option>
+          </Select>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <Input label="Horário início (1º turno)" type="time" value={formEscala.horaInicio} onChange={e=>setFE("horaInicio",e.target.value)}/>
+            <Input label="Horário fim (1º turno)" type="time" value={formEscala.horaFim} onChange={e=>setFE("horaFim",e.target.value)}/>
+            {formEscala.tipo==="12x24x72" && <>
+              <Input label="Horário início (2º turno)" type="time" value={formEscala.horaInicio2} onChange={e=>setFE("horaInicio2",e.target.value)}/>
+              <Input label="Horário fim (2º turno)" type="time" value={formEscala.horaFim2} onChange={e=>setFE("horaFim2",e.target.value)}/>
+            </>}
+          </div>
+          <div style={{background:"#f0f4ff",borderRadius:7,padding:8,fontSize:12,color:"#374151",marginTop:8}}>
+            Título: <strong>ESCALA ORDINÁRIA {["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][mes-1]}/{ano}</strong>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalCriar(false)}>Cancelar</Btn>
+            <Btn onClick={criarEscala}>✓ Criar escala</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal gerenciar grupo */}
+      {modalGrupo && escala && (()=>{
+        const [gId, eId] = [modalGrupo.grupoId, modalGrupo.escalaId];
+        const g = escala.grupos[gId]||{};
+        const membros = g.membros||[];
+        const [corBg, corFg] = GRUPO_CORES[gId]||["#1e3a5f","#fff"];
+        return (
+          <Modal title={`Grupo ${gId} — Membros`} onClose={()=>setModalGrupo(null)}>
+            <div style={{background:corBg,color:corFg,borderRadius:7,padding:"6px 12px",fontWeight:700,marginBottom:12,fontSize:13}}>GRUPO {gId}</div>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Adicionar policial</div>
+              <BuscaPolicial officers={officers} excluirIds={membros} onSelect={o=>addPolicial(eId,gId,o.id)}/>
+            </div>
+            {membros.map(id=>{
+              const o = officers.find(x=>x.id===id);
+              if (!o) return null;
+              return (
+                <div key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f0f0f0"}}>
+                  <Avatar name={o.nome} size={28}/>
+                  <div style={{flex:1,fontSize:12}}><strong>{o.grau}</strong> {o.nome}</div>
+                  <button onClick={()=>removePolicial(eId,gId,id)} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:14}}>✕</button>
+                </div>
+              );
+            })}
+            {membros.length===0 && <p style={{fontSize:12,color:"#9ca3af",textAlign:"center"}}>Nenhum policial no grupo.</p>}
+            <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}>
+              <Btn onClick={()=>setModalGrupo(null)}>✓ Fechar</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Modal editar célula */}
+      {editCell && escala && (
+        <Modal title={`Dia ${editCell.dia} — Grupo ${editCell.grupoId}`} onClose={()=>setEditCell(null)}>
+          <div style={{marginBottom:10,fontSize:12,color:"#374151"}}>Selecione a legenda ou deixe vazio para limpar:</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+            {Object.entries(LEGENDAS_ESCALA).map(([leg,desc])=>(
+              <button key={leg} onClick={()=>setEditLeg(leg)}
+                style={{padding:"4px 10px",borderRadius:6,border:`2px solid ${editLeg===leg?"#1e3a5f":"#e5e7eb"}`,background:editLeg===leg?"#1e3a5f":"#fff",color:editLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:editLeg===leg?700:400}}>
+                <strong>{leg}</strong> <span style={{fontSize:10,color:editLeg===leg?"#d1d5db":"#6b7280"}}>{desc}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <Btn variant="secondary" onClick={()=>{updateCell(escala.id,editCell.grupoId,editCell.dia,"");setEditCell(null);}}>🗑 Limpar</Btn>
+            <Btn variant="secondary" onClick={()=>setEditCell(null)}>Cancelar</Btn>
+            <Btn onClick={()=>{updateCell(escala.id,editCell.grupoId,editCell.dia,editLeg);setEditCell(null);}}>✓ Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:"#1e3a5f"}}>{escala?.titulo||"Sem escala para este período"}</div>
+          {escala && <div style={{fontSize:11,color:"#6b7280"}}>{escala.tipo==="24x96"?"Escala 24x96":"Escala 12x24 12x72"} · {escala.horaInicio}h às {escala.horaFim}h{escala.horaInicio2?" | "+escala.horaInicio2+"h às "+escala.horaFim2+"h":""}</div>}
+        </div>
+        {!escala && <Btn onClick={()=>setModalCriar(true)}>+ Criar escala</Btn>}
+        {escala && (
+          <div style={{display:"flex",gap:6}}>
+            {["A","B","C","D","E"].map(g=>{
+              const [bg,fg]=GRUPO_CORES[g]||["#1e3a5f","#fff"];
+              const count=(escala.grupos[g]?.membros||[]).length;
+              return <button key={g} onClick={()=>setModalGrupo({grupoId:g,escalaId:escala.id})}
+                style={{background:bg,color:fg,border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                Grupo {g} ({count})
+              </button>;
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Em serviço hoje */}
+      {escala && isCurrentMonth && emServico.length>0 && (
+        <Card style={{marginBottom:12,background:"#f0f4ff",border:"1px solid #c7d7f9"}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#1e3a5f",marginBottom:6}}>🚔 Em serviço hoje (dia {diaHoje})</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {emServico.map(({id,grupo,leg})=>{
+              const o=officers.find(x=>x.id===id);
+              if(!o) return null;
+              const [bg,fg]=GRUPO_CORES[grupo]||["#1e3a5f","#fff"];
+              return <span key={id} style={{background:bg,color:fg,borderRadius:999,padding:"2px 10px",fontSize:11}}>
+                <strong>{grupo}</strong> {o.nomeGuerra||o.nome.split(" ")[0]} · {leg}
+              </span>;
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Tabela de escala */}
+      {escala && (()=>{
+        const grupos = ["A","B","C","D","E"];
+        const dias = Array.from({length:diasNoMes},(_,i)=>i+1);
+        const diasSemana = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+        const primeiroDia = new Date(ano, mes-1, 1).getDay();
+
+        return (
+          <div>
+            {grupos.map(gId=>{
+              const g = escala.grupos[gId]||{};
+              const membros = g.membros||[];
+              if(!membros.length) return null;
+              const [bgGrupo] = GRUPO_CORES[gId]||["#1e3a5f"];
+
+              return (
+                <div key={gId} style={{marginBottom:20}}>
+                  <div style={{background:bgGrupo,color:"#fff",padding:"4px 12px",fontWeight:700,fontSize:12,marginBottom:4,borderRadius:"6px 6px 0 0"}}>
+                    GRUPO {gId}
+                  </div>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{borderCollapse:"collapse",fontSize:11,tableLayout:"fixed",width:"100%"}}>
+                      <thead>
+                        <tr>
+                          <th style={{...thStyle,width:180,textAlign:"left",padding:"4px 8px"}}>Nome</th>
+                          <th style={{...thStyle,width:90,textAlign:"left",padding:"4px 8px"}}>Função</th>
+                          {dias.map(d=>{
+                            const ds = diasSemana[(primeiroDia+d-1)%7];
+                            const isSab = ds==="Sáb";
+                            const isDom = ds==="Dom";
+                            const isHoje2 = isCurrentMonth && d===diaHoje;
+                            return <th key={d} style={{...thStyle,width:32,background:isHoje2?"#1e3a5f":isSab||isDom?"#fee2e2":"#f8faff",color:isHoje2?"#fff":isSab||isDom?"#991b1b":"#374151"}}>
+                              <div style={{fontSize:9,lineHeight:1}}>{ds}</div>
+                              <div style={{fontSize:11,fontWeight:700}}>{d}</div>
+                            </th>;
+                          })}
+                          <th style={{...thStyle,width:40,background:"#1e3a5f",color:"#fff"}}>Ad.Not</th>
+                          <th style={{...thStyle,width:50,background:"#1e3a5f",color:"#fff"}}>Total h</th>
+                          <th style={{...thStyle,width:30,background:"#374151",color:"#fff"}}>VD</th>
+                          <th style={{...thStyle,width:30,background:"#374151",color:"#fff"}}>HE</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {membros.map(pid=>{
+                          const o=officers.find(x=>x.id===pid);
+                          if(!o) return null;
+                          const cellMap = {};
+                          dias.forEach(d=>{ const leg=escala.celulas[gId+"_"+d]; if(leg) cellMap[d]=leg; });
+                          const {total, noturno} = calcHoras(cellMap, diasNoMes);
+
+                          return (
+                            <tr key={pid}>
+                              <td style={{...tdStyle,textAlign:"left",padding:"3px 8px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                {o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}
+                              </td>
+                              <td style={{...tdStyle,textAlign:"left",padding:"3px 8px",color:"#6b7280",fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                {o.cargo||o.localTrabalho||""}
+                              </td>
+                              {dias.map(d=>{
+                                const leg = cellMap[d];
+                                const isSab = diasSemana[(primeiroDia+d-1)%7]==="Sáb";
+                                const isDom = diasSemana[(primeiroDia+d-1)%7]==="Dom";
+                                const isHoje2 = isCurrentMonth && d===diaHoje;
+                                const bgCell = leg ? (leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7") : isHoje2?"#eff6ff":isSab||isDom?"#fff5f5":"#fff";
+                                return (
+                                  <td key={d} style={{...tdStyle,background:bgCell,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#d1d5db"}}
+                                    onClick={()=>{setEditCell({grupoId:gId,escalaId:escala.id,dia:d});setEditLeg(leg||"");}}>
+                                    {leg||""}
+                                  </td>
+                                );
+                              })}
+                              <td style={{...tdStyle,fontWeight:700,color:"#374151",background:"#f0f4ff"}}>{noturno||""}</td>
+                              <td style={{...tdStyle,fontWeight:700,color:"#1e3a5f",background:"#dbeafe"}}>{total||""}</td>
+                              <td style={{...tdStyle,background:"#f9fafb"}}></td>
+                              <td style={{...tdStyle,background:"#f9fafb"}}></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Legendas */}
+            <div style={{marginTop:12,padding:"8px 12px",background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:6,fontSize:10,color:"#374151"}}>
+              <strong>Legendas:</strong> [ {Object.entries(LEGENDAS_ESCALA).map(([k,v])=>`${k}: ${v}`).join(", ")} ]
+            </div>
+          </div>
+        );
+      })()}
+
+      {!escala && (
+        <div style={{textAlign:"center",padding:40,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
+          <div style={{fontSize:32,marginBottom:8}}>📋</div>
+          <div style={{fontSize:14,fontWeight:500}}>Nenhuma escala criada para {["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1]}/{ano}</div>
+          <div style={{fontSize:12,marginTop:4,marginBottom:16}}>Crie a escala para este mês para começar.</div>
+          <Btn onClick={()=>setModalCriar(true)}>+ Criar escala</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AbaEfetivo Pelotão ──────────────────────────────────────────────────────
+function AbaEfetivoPelotao({ pelotao, officers, afastamentos, ferias, mes, ano }) {
+  const [fSit, setFSit] = useState("todos");
+  const todayStr = new Date().toISOString().slice(0,10);
+  const mesNome = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1];
+
+  // Members: from pelotao field + manual additions for this month
+  const manualKey = mes+"_"+ano;
+  const manuais = (pelotao.manualMes||{})[manualKey]||[];
+  const baseIds = officers.filter(o=>(o.pelotao||"").toLowerCase().includes((pelotao.nome||"").toLowerCase().split(" ")[0])||manuais.includes(o.id)).map(o=>o.id);
+  const allIds = [...new Set([...baseIds,...manuais])];
+  const membros = officers.filter(o=>allIds.includes(o.id));
+
+  // Situação real
+  const getSit = o => getSituacaoReal(o, afastamentos, ferias);
+
+  let lista = membros;
+  if (fSit!=="todos") {
+    if (fSit==="Férias") lista = lista.filter(o=>getSit(o)==="Férias");
+    else if (fSit==="JMS") lista = lista.filter(o=>getSit(o)==="Junta Médica");
+    else if (fSit==="Atestado") lista = lista.filter(o=>getSit(o)==="Atestado");
+    else lista = lista.filter(o=>(o.situacao||"Ativo")===fSit);
+  }
+  lista = lista.sort(rankSort);
+
+  const masc = membros.filter(o=>(o.sexo||"MASC")==="MASC").length;
+  const fem  = membros.filter(o=>o.sexo==="FEM").length;
+
+  // Grau counts
+  const byGrau = {};
+  membros.forEach(o=>{ byGrau[o.grau]=(byGrau[o.grau]||0)+1; });
+
+  // Aniversariantes do mês
+  const aniv = membros.filter(o=>{
+    if(!o.dataNasc) return false;
+    return parseInt((o.dataNasc||"").split("-")[1])===mes;
+  }).sort((a,b)=>parseInt(a.dataNasc.split("-")[2])-parseInt(b.dataNasc.split("-")[2]));
+  const hoje2 = new Date().getDate();
+  const anivHoje = mes===new Date().getMonth()+1 ? aniv.filter(o=>parseInt((o.dataNasc||"").split("-")[2])===hoje2) : [];
+
+  return (
+    <div>
+      {/* Alerta aniversariante do dia */}
+      {anivHoje.length>0 && (
+        <div style={{background:"#fce7f3",border:"1px solid #f9a8d4",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:13}}>
+          🎂 <strong>Aniversariante(s) hoje no pelotão:</strong> {anivHoje.map(o=>`${o.grau} ${o.nome}`).join(", ")}
+        </div>
+      )}
+
+      {/* Resumo */}
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{background:"#1e3a5f",color:"#fff",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600}}>Total: {membros.length}</div>
+        <div style={{background:"#3b82f6",color:"#fff",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600}}>M: {masc}</div>
+        <div style={{background:"#ec4899",color:"#fff",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600}}>F: {fem}</div>
+        {Object.entries(byGrau).map(([g,c])=>(
+          <div key={g} style={{background:"#f3f4f6",borderRadius:8,padding:"8px 12px",fontSize:11,fontWeight:500,color:"#374151"}}>{g}: {c}</div>
+        ))}
+      </div>
+
+      {/* Aniversariantes do mês */}
+      {aniv.length>0 && (
+        <Card style={{marginBottom:12}}>
+          <div style={{fontWeight:600,fontSize:13,color:"#9d174d",marginBottom:8}}>🎂 Aniversariantes de {mesNome}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {aniv.map(o=>{
+              const dia=parseInt((o.dataNasc||"").split("-")[2]);
+              const isHj=dia===hoje2&&mes===new Date().getMonth()+1;
+              return <span key={o.id} style={{background:isHj?"#fce7f3":"#f3f4f6",color:isHj?"#9d174d":"#374151",borderRadius:999,padding:"3px 10px",fontSize:11}}>
+                {String(dia).padStart(2,"0")} — {o.grau} {o.nome}{isHj?" 🎉":""}
+              </span>;
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+        {["todos","Ativo","Férias","JMS","Atestado"].map(s=>(
+          <button key={s} onClick={()=>setFSit(s)}
+            style={{padding:"5px 12px",border:`2px solid ${fSit===s?"#1e3a5f":"#e5e7eb"}`,borderRadius:6,background:fSit===s?"#1e3a5f":"#fff",color:fSit===s?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:fSit===s?600:400}}>
+            {s==="todos"?"Todos":s}
+          </button>
+        ))}
+      </div>
+
+      {/* Lista */}
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {lista.map(o=>(
+          <div key={o.id} style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 14px",display:"flex",alignItems:"center",gap:10}}>
+            <Avatar name={o.nome} size={32}/>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13}}>{o.grau} {o.nome.toUpperCase()}</div>
+              <div style={{fontSize:11,color:"#6b7280"}}>Mat. {cleanMat(o.matricula)}{o.cargo?" · "+o.cargo:""}</div>
+            </div>
+            <SitBadge sit={getSit(o)}/>
+            {o.sexo==="FEM"&&<Badge color="#fce7f3" textColor="#9d174d" size={10}>F</Badge>}
+          </div>
+        ))}
+        {lista.length===0&&<div style={{textAlign:"center",padding:24,color:"#9ca3af"}}>Nenhum policial encontrado.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── ModPelotao principal ────────────────────────────────────────────────────
+function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPelotoes, escalas, setEscalas, loggedUser, perm }) {
+  const hoje = new Date();
+  const [mes, setMes] = useState(hoje.getMonth()+1);
+  const [ano, setAno] = useState(hoje.getFullYear());
+  const [pelotaoSel, setPelotaoSel] = useState(null);
+  const [aba, setAba] = useState("efetivo");
+  const [modalConfig, setModalConfig] = useState(null); // pelotao being configured
+  const [formConfig, setFormConfig] = useState({});
+  const [modalAddManual, setModalAddManual] = useState(false);
+
+  // Auto-generate pelotões from unique pelotao field values in officers
+  const uniquePelotoes = [...new Set(officers.map(o=>(o.pelotao||"").trim()).filter(Boolean))].sort();
+
+  // Merge with saved pelotoes config (commander, locais)
+  function getPelotaoConfig(nome) {
+    return pelotoes.find(p=>p.nome===nome) || {id:nome, nome, comandanteId:null, locais:[]};
+  }
+
+  function saveConfig(nome, dados) {
+    setPelotoes(ps=>{
+      const exists = ps.find(p=>p.nome===nome);
+      if (exists) return ps.map(p=>p.nome===nome?{...p,...dados}:p);
+      return [...ps, {id:Date.now(),nome,...dados}];
+    });
+  }
+
+  // Access check
+  function canAccess(pelConfig) {
+    if (perm.admin) return true;
+    const user = loggedUser;
+    if (!pelConfig.comandanteId) return false;
+    return pelConfig.comandanteId === user.matricula || pelConfig.comandanteId === user.id?.toString();
+  }
+
+  const ABAS = ["efetivo","escala","extras","ocorrências","saúde","vantagens"];
+
+  if (pelotaoSel) {
+    const cfg = getPelotaoConfig(pelotaoSel);
+    if (!canAccess(cfg)) {
+      return (
+        <div style={{textAlign:"center",padding:60}}>
+          <div style={{fontSize:40,marginBottom:12}}>🔒</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#991b1b",marginBottom:8}}>Acesso negado.</div>
+          <div style={{fontSize:13,color:"#6b7280",marginBottom:20}}>Acesso permitido apenas para o comandante de pelotão.</div>
+          <Btn variant="secondary" onClick={()=>setPelotaoSel(null)}>← Voltar</Btn>
+        </div>
+      );
+    }
+
+    const manualKey = mes+"_"+ano;
+    const manuais = (cfg.manualMes||{})[manualKey]||[];
+
+    return (
+      <div>
+        {/* Cabeçalho */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <button onClick={()=>setPelotaoSel(null)} style={{background:"#f3f4f6",border:"none",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:13}}>← Voltar</button>
+            <div>
+              <div style={{fontWeight:700,fontSize:18,color:"#1e3a5f"}}>🪖 {pelotaoSel}</div>
+              {cfg.comandanteId && (()=>{
+                const cmd = officers.find(o=>cleanMat(o.matricula)===cfg.comandanteId||o.id?.toString()===cfg.comandanteId);
+                return cmd ? <div style={{fontSize:12,color:"#6b7280"}}>Cmt: {cmd.grau} {cmd.nome}</div> : null;
+              })()}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <select value={mes} onChange={e=>setMes(Number(e.target.value))} style={{padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}>
+              {["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"].map((m,i)=>(
+                <option key={i+1} value={i+1}>{m}</option>
+              ))}
+            </select>
+            <select value={ano} onChange={e=>setAno(Number(e.target.value))} style={{padding:"6px 8px",border:"1px solid #d1d5db",borderRadius:6,fontSize:12,outline:"none"}}>
+              {[2024,2025,2026,2027].map(a=><option key={a} value={a}>{a}</option>)}
+            </select>
+            {perm.admin && (
+              <Btn small variant="secondary" onClick={()=>{setFormConfig({comandanteId:cfg.comandanteId||"",locais:cfg.locais||[]});setModalConfig(cfg);}}>⚙️ Configurar</Btn>
+            )}
+          </div>
+        </div>
+
+        {/* Modal adicionar manualmente */}
+        {modalAddManual && (
+          <Modal title="Adicionar policial manualmente" onClose={()=>setModalAddManual(false)}>
+            <p style={{fontSize:12,color:"#6b7280",marginBottom:8}}>Este policial será adicionado apenas para {["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1]}/{ano}.</p>
+            <BuscaPolicial officers={officers} excluirIds={manuais} onSelect={o=>{
+              setPelotoes(ps=>ps.map(p=>p.nome===pelotaoSel?{
+                ...p, manualMes:{...(p.manualMes||{}), [manualKey]:[...new Set([...manuais, o.id])]}
+              }:p));
+              if (!pelotoes.find(p=>p.nome===pelotaoSel)) {
+                saveConfig(pelotaoSel, {manualMes:{[manualKey]:[o.id]}});
+              }
+              setModalAddManual(false);
+            }}/>
+            <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+              <Btn variant="secondary" onClick={()=>setModalAddManual(false)}>Fechar</Btn>
+            </div>
+          </Modal>
+        )}
+
+        {/* Abas */}
+        <div style={{display:"flex",gap:2,marginBottom:16,borderBottom:"2px solid #e5e7eb",flexWrap:"wrap"}}>
+          {ABAS.map(a=>(
+            <button key={a} onClick={()=>setAba(a)}
+              style={{padding:"8px 16px",border:"none",borderBottom:`2px solid ${aba===a?"#1e3a5f":"transparent"}`,background:"transparent",cursor:"pointer",fontSize:12,fontWeight:aba===a?700:400,color:aba===a?"#1e3a5f":"#6b7280",textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:-2}}>
+              {a}
+            </button>
+          ))}
+          {aba==="efetivo" && (
+            <button onClick={()=>setModalAddManual(true)} style={{marginLeft:"auto",padding:"6px 12px",background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,fontSize:11,cursor:"pointer",fontWeight:600}}>
+              + Adicionar manual
+            </button>
+          )}
+        </div>
+
+        {/* Conteúdo das abas */}
+        {aba==="efetivo" && (
+          <AbaEfetivoPelotao pelotao={{...cfg, nome:pelotaoSel}} officers={officers}
+            afastamentos={afastamentos} ferias={ferias} mes={mes} ano={ano}/>
+        )}
+        {aba==="escala" && (
+          <AbaEscala pelotao={{...cfg, id:cfg.id||pelotaoSel, nome:pelotaoSel}}
+            escalas={escalas} setEscalas={setEscalas}
+            officers={officers} mes={mes} ano={ano}
+            afastamentos={afastamentos} ferias={ferias}/>
+        )}
+        {["extras","ocorrências","saúde","vantagens"].includes(aba) && (
+          <div style={{textAlign:"center",padding:40,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
+            <div style={{fontSize:28,marginBottom:8}}>🚧</div>
+            <div style={{fontSize:14,fontWeight:500}}>Aba <strong>{aba.toUpperCase()}</strong> em desenvolvimento</div>
+            <div style={{fontSize:12,marginTop:4}}>Será implementada em breve.</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Tela de seleção de pelotões
+  return (
+    <div>
+      {/* Modal configurar pelotão */}
+      {modalConfig && (
+        <Modal title={`Configurar — ${modalConfig.nome}`} onClose={()=>setModalConfig(null)}>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Comandante de pelotão</div>
+            <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{
+              setFormConfig(f=>({...f, comandanteId:cleanMat(o.matricula)}));
+            }}/>
+            {formConfig.comandanteId && (()=>{
+              const cmd = officers.find(o=>cleanMat(o.matricula)===formConfig.comandanteId);
+              return cmd ? <div style={{background:"#f0f4ff",borderRadius:6,padding:"6px 10px",fontSize:12,marginTop:6}}><strong>{cmd.grau} {cmd.nome}</strong></div> : null;
+            })()}
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalConfig(null)}>Cancelar</Btn>
+            <Btn onClick={()=>{saveConfig(modalConfig.nome, formConfig);setModalConfig(null);}}>💾 Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{fontSize:18,fontWeight:700,margin:0}}>🪖 Gestão de Pelotão</h2>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+        {uniquePelotoes.map(nome=>{
+          const cfg = getPelotaoConfig(nome);
+          const cmd = cfg.comandanteId ? officers.find(o=>cleanMat(o.matricula)===cfg.comandanteId||o.id?.toString()===cfg.comandanteId) : null;
+          const count = officers.filter(o=>(o.pelotao||"").trim()===nome).length;
+          const acesso = canAccess(cfg);
+
+          return (
+            <div key={nome} onClick={()=>setPelotaoSel(nome)}
+              style={{background:"#fff",border:`2px solid ${acesso?"#1e3a5f":"#e5e7eb"}`,borderRadius:10,padding:16,cursor:"pointer",transition:"all 0.15s",opacity:acesso?1:0.65}}
+              onMouseEnter={e=>{if(acesso){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,0.1)";}}}
+              onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none";}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#1e3a5f"}}>🪖 {nome}</div>
+                <Badge color={acesso?"#dcfce7":"#fee2e2"} textColor={acesso?"#15803d":"#991b1b"} size={10}>{acesso?"✓ Acesso":"🔒"}</Badge>
+              </div>
+              <div style={{fontSize:12,color:"#6b7280",marginBottom:4}}>{count} policial(is) cadastrado(s)</div>
+              {cmd
+                ? <div style={{fontSize:11,background:"#f0f4ff",borderRadius:5,padding:"3px 8px",color:"#1d4ed8"}}>Cmt: {cmd.grau} {cmd.nome}</div>
+                : <div style={{fontSize:11,color:"#d97706"}}>⚠️ Sem comandante definido</div>}
+              {perm.admin && (
+                <button onClick={e=>{e.stopPropagation();setFormConfig({comandanteId:cfg.comandanteId||"",locais:cfg.locais||[]});setModalConfig(cfg);}}
+                  style={{marginTop:8,background:"none",border:"1px solid #e5e7eb",borderRadius:5,padding:"3px 10px",fontSize:11,cursor:"pointer",color:"#6b7280"}}>
+                  ⚙️ Configurar
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {uniquePelotoes.length===0 && (
+          <div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"#9ca3af"}}>
+            Nenhum pelotão cadastrado. Preencha o campo "Pelotão" nas fichas dos policiais.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 const MODULOS_SISTEMA = [
   {id:"efetivo",     label:"Efetivo"},
   {id:"locais",      label:"Locais de Trabalho"},
@@ -4825,6 +5532,8 @@ export default function App() {
     return raw.map((p,i)=>({...p, id:i+1}));
   });
   const [users, setUsers] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
+  const [pelotoes, setPelotoes] = useSupabaseState("sirh_pelotoes", []);
+  const [escalas, setEscalas] = useSupabaseState("sirh_escalas", []);
   const [dashFilter, setDashFilter] = useState(null);
   const [feriasDetalhe, setFeriasDetalhe] = useState(null);
 
@@ -4885,6 +5594,7 @@ export default function App() {
     {id:"vantagens",    label:"Vantagens",    icon:"⭐", show:perm.verVantagens||perm.admin},
     {id:"corregedoria", label:"Corregedoria", icon:"⚖️", show:perm.verCorregedoria||perm.admin},
     {id:"exportar",     label:"Exportar",     icon:"📊", show:perm.verExportar||perm.admin},
+    {id:"pelotao",      label:"Pelotão",     icon:"🪖", show:true},
     {id:"admin",        label:"Admin",        icon:"⚙️", show:perm.admin},
   ].filter(n=>n.show);
 
@@ -4933,6 +5643,11 @@ export default function App() {
         {page==="vantagens" && <ModVantagens officers={officers} vantagens={vantagens} setVantagens={setVantagens} loggedUser={loggedUser}/>}
         {page==="corregedoria" && <ModCorregedoria officers={officers} corregedoria={corregedoria} setCorregedoria={setCorregedoria} perm={perm} loggedUser={loggedUser}/>}
         {page==="relatorios" && <ModRelatorios officers={officers} corregedoria={corregedoria} cursos={cursos} afastamentos={afastamentos} ferias={ferias} loggedUser={loggedUser}/>}
+        {page==="pelotao" && <ModPelotao
+          officers={officers} afastamentos={afastamentos} ferias={ferias}
+          vantagens={vantagens} pelotoes={pelotoes} setPelotoes={setPelotoes}
+          escalas={escalas} setEscalas={setEscalas}
+          loggedUser={loggedUser} perm={perm}/>}
         {page==="exportar" && (perm.admin||perm.verExportar) && <ModExportar officers={officers}/>}
         {page==="admin" && perm.admin && <ModAdmin users={users} setUsers={setUsers} officers={officers}/>}
         {page==="admin" && !perm.admin && <div style={{textAlign:"center",padding:40,color:"#9ca3af"}}>Acesso restrito.</div>}
