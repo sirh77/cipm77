@@ -4244,7 +4244,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
         // C: DIA dia2, NOITE dia3, folga 4,5,6
         // D: NOITE dia2, folga 3,4,5, DIA dia6... (mesmo pos A, turno noite)
         // E: DIA dia3, NOITE dia4, folga 5,6,7
-        const SLOTS = {A:{dia:0,noite:1},B:{dia:4,noite:0},C:{dia:1,noite:2},D:{dia:0,noite:1},E:{dia:2,noite:3}};
+        const SLOTS = {A:{dia:0,noite:1},B:{dia:4,noite:0},C:{dia:1,noite:2},D:{dia:2,noite:3},E:{dia:3,noite:4}};
         const s = SLOTS[gId]||{dia:0,noite:1};
         for (let d=1; d<=diasNoMes; d++) {
           const pos=(d-1)%5;
