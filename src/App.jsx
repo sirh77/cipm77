@@ -1,5 +1,6 @@
 /* 
   SiRH77 — Sistema de RH da 77ª CIPM/PMBA
+  v2.1 — build 2026-06-02
   Configuração Supabase: defina as variáveis de ambiente no Vercel:
     VITE_SUPABASE_URL=https://seu-projeto.supabase.co
     VITE_SUPABASE_ANON_KEY=sua-chave-anon
