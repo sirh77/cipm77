@@ -4145,7 +4145,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
   const escalaAtual = escalaSel ? escalasDoPeriodo.find(e=>e.id===escalaSel) : escalasDoPeriodo[0] || null;
 
   // Auto-select first when period changes
-  React.useEffect(()=>{
+  useEffect(()=>{
     if(escalasDoPeriodo.length>0 && (!escalaSel || !escalasDoPeriodo.find(e=>e.id===escalaSel))) {
       setEscalaSel(escalasDoPeriodo[0].id);
     } else if(escalasDoPeriodo.length===0) {
