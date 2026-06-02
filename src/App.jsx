@@ -4143,18 +4143,8 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
 
   // All escalas for this pelotao/mes/ano (can be multiple)
   const escalasDoPeriodo = escalas.filter(e => e.pelotaoId===pelotao.id && e.mes===mes && e.ano===ano);
-  const escalaAtual = escalaSel ? escalasDoPeriodo.find(e=>e.id===escalaSel) : escalasDoPeriodo[0] || null;
+  const escalaAtual = escalasDoPeriodo.find(e=>e.id===escalaSel) || escalasDoPeriodo[0] || null;
 
-  // Auto-select first when period changes
-  useEffect(()=>{
-    if(escalasDoPeriodo.length>0 && (!escalaSel || !escalasDoPeriodo.find(e=>e.id===escalaSel))) {
-      setEscalaSel(escalasDoPeriodo[0].id);
-    } else if(escalasDoPeriodo.length===0) {
-      setEscalaSel(null);
-    }
-  }, [mes, ano, escalas.length]);
-
-  // ── Lógica de células por POLICIAL (pid) ─────────────────────────────────
   // Key: pid + "_" + dia  (not grupoId!)
   // Isso garante que remover um dia de um policial não afeta outro
 
