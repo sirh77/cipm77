@@ -4083,77 +4083,196 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
   );
 }
 
+// Módulos do sistema e seus labels
+const MODULOS_SISTEMA = [
+  {id:"efetivo",     label:"Efetivo"},
+  {id:"locais",      label:"Locais de Trabalho"},
+  {id:"ferias",      label:"Férias"},
+  {id:"saude",       label:"Saúde"},
+  {id:"cursos",      label:"Cursos"},
+  {id:"vantagens",   label:"Vantagens"},
+  {id:"corregedoria",label:"Corregedoria"},
+  {id:"exportar",    label:"Exportar"},
+];
+
+// Permissões padrão por perfil
+const PERMS_PADRAO = {
+  "Admin":        {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"editar",exportar:"editar"},
+  "SSO":          {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"ver",exportar:"ver"},
+  "SPO":          {efetivo:"ver",locais:"ver",ferias:"ver",saude:"ver",cursos:"ver",vantagens:"ver",corregedoria:"ver",exportar:"nenhum"},
+  "ALMOX":        {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"ver",corregedoria:"nenhum",exportar:"ver"},
+  "Corregedoria": {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"nenhum",corregedoria:"editar",exportar:"nenhum"},
+};
+
 function ModAdmin({ users, setUsers, officers }) {
-  const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({nome:"",matricula:"",grau:"",perfil:"SSO"});
+  const [modal, setModal] = useState(null); // "novo" | {user}
+  const [form, setForm] = useState({nome:"",matricula:"",grau:"",perfil:"SSO",modulos:{}});
+  const [confirm, setConfirm] = useState(null);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  // When perfil changes, reset modulos to defaults
+  function setPerfil(perfil) {
+    setForm(f=>({...f, perfil, modulos:{...(PERMS_PADRAO[perfil]||{})}}));
+  }
+
+  function setModPerm(modId, perm) {
+    setForm(f=>({...f, modulos:{...f.modulos, [modId]:perm}}));
+  }
+
+  function getModulos(formData) {
+    // Merge defaults with custom
+    const base = PERMS_PADRAO[formData.perfil]||{};
+    return {...base, ...formData.modulos};
+  }
 
   function save() {
     if (!form.matricula) { alert("Matrícula obrigatória."); return; }
-    // senha inicial = matrícula, primeiro acesso = true
-    const newU = {
-      ...form,
-      id: Date.now(),
-      senha: form.matricula,
-      ativo: true,
-      primeiroAcesso: true,
-    };
-    setUsers(us=>[...us,newU]);
+    const mods = getModulos(form);
+    if (modal==="novo") {
+      const newU = {
+        ...form, id:Date.now(), senha:form.matricula,
+        ativo:true, primeiroAcesso:true, modulos:mods,
+      };
+      setUsers(us=>[...us, newU]);
+    } else {
+      setUsers(us=>us.map(x=>x.id===modal.id?{...x,...form,modulos:mods}:x));
+    }
     setModal(null);
   }
 
+  function openEdit(u) {
+    const mods = u.modulos || PERMS_PADRAO[u.perfil] || {};
+    setForm({nome:u.nome,matricula:u.matricula,grau:u.grau||"",perfil:u.perfil||"SSO",modulos:{...mods}});
+    setModal(u);
+  }
+
+  const isNovo = modal==="novo";
+  const modalTitle = isNovo ? "Novo usuário" : "Editar usuário";
+
+  const NIVEL_LABELS = {nenhum:"🚫 Sem acesso", ver:"👁 Somente visualizar", editar:"✏️ Visualizar e editar"};
+  const NIVEL_COLORS = {nenhum:["#f3f4f6","#6b7280"], ver:["#dbeafe","#1d4ed8"], editar:["#dcfce7","#15803d"]};
+
   return (
     <div>
+      {confirm && <Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
+
       {modal && (
-        <Modal title="Novo usuário" onClose={()=>setModal(null)}>
-          <div style={{marginBottom:12}}>
-            <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Buscar policial para vincular</label>
-            <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{
-              setForm(f=>({...f, nome:o.nome, matricula:o.matricula, grau:o.grau}));
-            }}/>
-          </div>
-          {form.nome && (
-            <div style={{background:"#f0f4ff",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13}}>
-              <strong>{form.grau} {form.nome}</strong> — Mat. {form.matricula}
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:640,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15}}>{modalTitle}</span>
+              <button onClick={()=>setModal(null)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕</button>
             </div>
-          )}
-          <Input label="Nome completo" value={form.nome} onChange={e=>set("nome",e.target.value)}/>
-          <Input label="Matrícula (será o login e a senha inicial)" value={form.matricula} onChange={e=>set("matricula",e.target.value)}/>
-          <Select label="Perfil de acesso" value={form.perfil} onChange={e=>set("perfil",e.target.value)}>
-            {["Admin","SSO","SPO","ALMOX","Corregedoria"].map(p=><option key={p} value={p}>{p}</option>)}
-          </Select>
-          <div style={{background:"#fef3c7",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#92400e",marginBottom:12}}>
-            ⚠️ A senha inicial será a própria matrícula. No primeiro login, o usuário será solicitado a criar uma senha pessoal.
+            <div style={{padding:20}}>
+              {isNovo && (
+                <div style={{marginBottom:12}}>
+                  <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Buscar policial para vincular</label>
+                  <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{
+                    setForm(f=>({...f,nome:o.nome,matricula:o.matricula,grau:o.grau}));
+                  }}/>
+                </div>
+              )}
+              {form.nome && (
+                <div style={{background:"#f0f4ff",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13}}>
+                  <strong>{form.grau} {form.nome}</strong> — Mat. {form.matricula}
+                </div>
+              )}
+              <Input label="Nome completo" value={form.nome} onChange={e=>set("nome",e.target.value)}/>
+              <Input label="Matrícula (login)" value={form.matricula} onChange={e=>set("matricula",e.target.value)}/>
+              <div style={{marginBottom:12}}>
+                <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Perfil base</label>
+                <select value={form.perfil} onChange={e=>setPerfil(e.target.value)}
+                  style={{width:"100%",padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:8,fontSize:13,background:"#fff",outline:"none"}}>
+                  {["Admin","SSO","SPO","ALMOX","Corregedoria"].map(p=><option key={p} value={p}>{p}</option>)}
+                </select>
+                <div style={{fontSize:11,color:"#6b7280",marginTop:4}}>O perfil base define as permissões padrão abaixo, que podem ser ajustadas individualmente.</div>
+              </div>
+
+              {/* Permissões por módulo */}
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Permissões por módulo</div>
+                <div style={{border:"1px solid #e5e7eb",borderRadius:8,overflow:"hidden"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",background:"#f8faff",padding:"6px 12px",fontSize:11,fontWeight:600,color:"#6b7280",gap:4}}>
+                    <span>MÓDULO</span>
+                    <span style={{minWidth:80,textAlign:"center"}}>Sem acesso</span>
+                    <span style={{minWidth:80,textAlign:"center"}}>Só ver</span>
+                    <span style={{minWidth:80,textAlign:"center"}}>Ver+Editar</span>
+                  </div>
+                  {MODULOS_SISTEMA.map((mod,i)=>{
+                    const cur = form.modulos[mod.id] || PERMS_PADRAO[form.perfil]?.[mod.id] || "nenhum";
+                    return (
+                      <div key={mod.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",padding:"8px 12px",gap:4,alignItems:"center",background:i%2===0?"#fff":"#f9fafb",borderTop:"1px solid #f0f0f0"}}>
+                        <span style={{fontSize:13,fontWeight:500,color:"#374151"}}>{mod.label}</span>
+                        {["nenhum","ver","editar"].map(nivel=>{
+                          const sel = cur===nivel;
+                          const [bg,fg] = sel ? NIVEL_COLORS[nivel] : ["#f3f4f6","#9ca3af"];
+                          return (
+                            <button key={nivel} onClick={()=>setModPerm(mod.id,nivel)}
+                              style={{minWidth:80,padding:"4px 0",border:`2px solid ${sel?"currentColor":"#e5e7eb"}`,borderRadius:6,background:bg,color:fg,fontSize:11,fontWeight:sel?700:400,cursor:"pointer",transition:"all 0.1s"}}>
+                              {nivel==="nenhum"?"🚫 Nenhum":nivel==="ver"?"👁 Ver":"✏️ Editar"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {isNovo && (
+                <div style={{background:"#fef3c7",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#92400e",marginBottom:12}}>
+                  ⚠️ A senha inicial será a própria matrícula. No primeiro login, o usuário será solicitado a criar uma senha pessoal.
+                </div>
+              )}
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+                <Btn variant="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+                <Btn onClick={save}>{isNovo?"Criar usuário":"💾 Salvar alterações"}</Btn>
+              </div>
+            </div>
           </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
-            <Btn onClick={save}>Criar usuário</Btn>
-          </div>
-        </Modal>
+        </div>
       )}
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Administração de Usuários</h2>
-        <Btn onClick={()=>{setForm({nome:"",matricula:"",grau:"",perfil:"SSO"});setModal(true);}}>+ Novo usuário</Btn>
+        <Btn onClick={()=>{setForm({nome:"",matricula:"",grau:"",perfil:"SSO",modulos:{...PERMS_PADRAO["SSO"]}});setModal("novo");}}>+ Novo usuário</Btn>
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {users.map(u=>(
-          <Card key={u.id} style={{display:"flex",alignItems:"center",gap:12}}>
-            <Avatar name={u.nome} size={38}/>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:13}}>{u.nome}</div>
-              <div style={{fontSize:11,color:"#6b7280"}}>Login: {u.matricula}{u.grau?" · "+u.grau:""}</div>
-              {u.primeiroAcesso&&<div style={{fontSize:10,color:"#d97706"}}>⚠️ Aguardando troca de senha</div>}
-            </div>
-            <Badge color="#dbeafe" textColor="#1d4ed8">{u.perfil}</Badge>
-            <Badge color={u.ativo?"#dcfce7":"#fee2e2"} textColor={u.ativo?"#15803d":"#991b1b"}>{u.ativo?"Ativo":"Inativo"}</Badge>
-            <div style={{display:"flex",gap:4}}>
-              <Btn small variant={u.ativo?"warning":"success"} onClick={()=>setUsers(us=>us.map(x=>x.id===u.id?{...x,ativo:!x.ativo}:x))}>{u.ativo?"Desativar":"Ativar"}</Btn>
-              <Btn small variant="secondary" onClick={()=>setUsers(us=>us.map(x=>x.id===u.id?{...x,senha:x.matricula,primeiroAcesso:true}:x))}>Reset senha</Btn>
-            </div>
-          </Card>
-        ))}
+        {users.map(u=>{
+          const mods = u.modulos || PERMS_PADRAO[u.perfil] || {};
+          const editCount = Object.values(mods).filter(v=>v==="editar").length;
+          const verCount  = Object.values(mods).filter(v=>v==="ver").length;
+          return (
+            <Card key={u.id} style={{padding:"12px 16px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                <Avatar name={u.nome} size={38}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{u.grau?u.grau+" ":""}{u.nome}</div>
+                  <div style={{fontSize:11,color:"#6b7280"}}>Login: {u.matricula}</div>
+                  {u.primeiroAcesso&&<div style={{fontSize:10,color:"#d97706"}}>⚠️ Aguardando troca de senha</div>}
+                </div>
+                <Badge color="#dbeafe" textColor="#1d4ed8">{u.perfil||"SSO"}</Badge>
+                <Badge color={u.ativo?"#dcfce7":"#fee2e2"} textColor={u.ativo?"#15803d":"#991b1b"}>{u.ativo?"Ativo":"Inativo"}</Badge>
+              </div>
+              {/* Resumo de permissões */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                {MODULOS_SISTEMA.map(mod=>{
+                  const perm = mods[mod.id]||"nenhum";
+                  if (perm==="nenhum") return null;
+                  const [bg,fg] = NIVEL_COLORS[perm];
+                  return <span key={mod.id} style={{background:bg,color:fg,borderRadius:999,padding:"1px 8px",fontSize:10,fontWeight:500}}>{mod.label}: {perm==="editar"?"✏️":"👁"}</span>;
+                })}
+              </div>
+              <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                <Btn small variant="secondary" onClick={()=>openEdit(u)}>✏️ Editar acesso</Btn>
+                <Btn small variant="secondary" onClick={()=>setUsers(us=>us.map(x=>x.id===u.id?{...x,senha:x.matricula,primeiroAcesso:true}:x))}>🔑 Reset senha</Btn>
+                <Btn small variant={u.ativo?"warning":"success"} onClick={()=>setUsers(us=>us.map(x=>x.id===u.id?{...x,ativo:!x.ativo}:x))}>{u.ativo?"Desativar":"Ativar"}</Btn>
+                {u.perfil!=="Admin" && <Btn small variant="danger" onClick={()=>setConfirm({msg:`Excluir usuário ${u.nome}?`,action:()=>setUsers(us=>us.filter(x=>x.id!==u.id))})}>🗑</Btn>}
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
@@ -4730,19 +4849,42 @@ export default function App() {
     }} users={users} setUsers={setUsers}/>
   );
 
-  const perm = PERMS[loggedUser.perfil]||PERMS.SSO;
+  // Build perm object from user.modulos (new system) or legacy PERMS (fallback)
+  const userMods = loggedUser.modulos || PERMS_PADRAO[loggedUser.perfil] || PERMS_PADRAO["SSO"];
+  const perm = {
+    admin:      loggedUser.perfil==="Admin" || loggedUser.perfil==="admin",
+    editarTudo: loggedUser.perfil==="Admin" || loggedUser.perfil==="admin",
+    // Per-module: true if can edit, false if only view or none
+    efetivo:     userMods.efetivo==="editar",
+    locais:      userMods.locais==="editar",
+    ferias:      userMods.ferias==="editar",
+    saude:       userMods.saude==="editar",
+    cursos:      userMods.cursos==="editar",
+    vantagens:   userMods.vantagens==="editar",
+    corregedoria:userMods.corregedoria==="editar",
+    // Can access (view OR edit)
+    verEfetivo:     userMods.efetivo!=="nenhum",
+    verLocais:      userMods.locais!=="nenhum",
+    verFerias:      userMods.ferias!=="nenhum",
+    verSaude:       userMods.saude!=="nenhum",
+    verCursos:      userMods.cursos!=="nenhum",
+    verVantagens:   userMods.vantagens!=="nenhum",
+    verCorregedoria:userMods.corregedoria!=="nenhum",
+    verExportar:    userMods.exportar!=="nenhum",
+    // Legacy compat
+    sso: userMods.saude!=="nenhum" || userMods.ferias!=="nenhum",
+  };
 
   const navItems = [
     {id:"dashboard",    label:"Início",       icon:"🏠", show:true},
-    {id:"efetivo",      label:"Efetivo",      icon:"👮", show:true},
-    {id:"locais",       label:"Locais",       icon:"📍", show:perm.admin||perm.editarTudo},
-    {id:"ferias",       label:"Férias",       icon:"🏖️", show:perm.sso},
-    {id:"saude",        label:"Saúde",        icon:"🏥", show:perm.sso},
-    {id:"cursos",       label:"Cursos",       icon:"🎓", show:perm.sso},
-    {id:"vantagens",    label:"Vantagens",    icon:"⭐", show:true},
-    {id:"corregedoria", label:"Corregedoria", icon:"⚖️", show:true},
-    {id:"relatorios",   label:"Relatórios",   icon:"🖨️", show:false},
-    {id:"exportar",     label:"Exportar",     icon:"📊", show:perm.admin||perm.editarTudo},
+    {id:"efetivo",      label:"Efetivo",      icon:"👮", show:perm.verEfetivo||perm.admin},
+    {id:"locais",       label:"Locais",       icon:"📍", show:perm.verLocais||perm.admin},
+    {id:"ferias",       label:"Férias",       icon:"🏖️", show:perm.verFerias||perm.admin},
+    {id:"saude",        label:"Saúde",        icon:"🏥", show:perm.verSaude||perm.admin},
+    {id:"cursos",       label:"Cursos",       icon:"🎓", show:perm.verCursos||perm.admin},
+    {id:"vantagens",    label:"Vantagens",    icon:"⭐", show:perm.verVantagens||perm.admin},
+    {id:"corregedoria", label:"Corregedoria", icon:"⚖️", show:perm.verCorregedoria||perm.admin},
+    {id:"exportar",     label:"Exportar",     icon:"📊", show:perm.verExportar||perm.admin},
     {id:"admin",        label:"Admin",        icon:"⚙️", show:perm.admin},
   ].filter(n=>n.show);
 
@@ -4791,7 +4933,7 @@ export default function App() {
         {page==="vantagens" && <ModVantagens officers={officers} vantagens={vantagens} setVantagens={setVantagens} loggedUser={loggedUser}/>}
         {page==="corregedoria" && <ModCorregedoria officers={officers} corregedoria={corregedoria} setCorregedoria={setCorregedoria} perm={perm} loggedUser={loggedUser}/>}
         {page==="relatorios" && <ModRelatorios officers={officers} corregedoria={corregedoria} cursos={cursos} afastamentos={afastamentos} ferias={ferias} loggedUser={loggedUser}/>}
-        {page==="exportar" && (perm.admin||perm.editarTudo) && <ModExportar officers={officers}/>}
+        {page==="exportar" && (perm.admin||perm.verExportar) && <ModExportar officers={officers}/>}
         {page==="admin" && perm.admin && <ModAdmin users={users} setUsers={setUsers} officers={officers}/>}
         {page==="admin" && !perm.admin && <div style={{textAlign:"center",padding:40,color:"#9ca3af"}}>Acesso restrito.</div>}
       </div>
