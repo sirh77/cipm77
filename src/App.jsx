@@ -4221,11 +4221,44 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
   }
 
   function addMembro(eid, gId, pid) {
-    setEscalas(es=>es.map(e=> e.id!==eid ? e : {
-      ...e,
-      grupos: e.grupos.map(g=> g.id!==gId ? g : {
-        ...g, membros:[...new Set([...g.membros, pid])]
-      })
+    setEscalas(es=>es.map(e=> {
+      if (e.id!==eid) return e;
+      // Find index of this group among all groups (A=0, B=1, etc)
+      const gruposList = ["A","B","C","D","E"];
+      const gi = gruposList.indexOf(gId);
+      const n = gruposList.length; // 5 grupos
+      const novasCelulas = {...(e.celulas||{})};
+
+      // Determine legendas baseado no horário da escala
+      const legDia   = (e.horaInicio||"").startsWith("06:3") ? "R19" : "C8";
+      const legNoite = (e.horaInicio2||"").startsWith("18:3") ? "R20" : "C9";
+
+      if (e.tipo==="24x96") {
+        // Grupo gi trabalha quando (d-1-gi) % 5 === 0
+        for (let d=1; d<=diasNoMes; d++) {
+          if ((d-1-gi) % n === 0) {
+            novasCelulas[pid+"_"+d] = legDia;
+          }
+        }
+      } else {
+        // 12x24x72: cada dia tem 2 slots. grupo gi pega slot (gi % n)
+        // dia slot: ((d-1)*2) % n === gi → turno dia
+        // noite slot: ((d-1)*2+1) % n === gi → turno noite
+        for (let d=1; d<=diasNoMes; d++) {
+          const cicloD = ((d-1)*2)   % n;
+          const cicloN = ((d-1)*2+1) % n;
+          if (gi === cicloD) novasCelulas[pid+"_"+d] = legDia;
+          if (gi === cicloN) novasCelulas[pid+"_"+d] = legNoite;
+        }
+      }
+
+      return {
+        ...e,
+        celulas: novasCelulas,
+        grupos: e.grupos.map(g=> g.id!==gId ? g : {
+          ...g, membros:[...new Set([...g.membros, pid])]
+        })
+      };
     }));
   }
 
