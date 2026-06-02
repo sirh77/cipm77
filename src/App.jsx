@@ -4238,17 +4238,18 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
           if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = legDia;
         }
       } else {
-        // 12x24x72: ciclo de 5 dias, cada grupo trabalha 2 dias consecutivos e folga 3
-        // Grupo A: dia1=dia, dia2=noite, folga3,4,5, dia6=dia, dia7=noite...
-        // Grupo B: dia2=dia, dia3=noite, folga4,5,6, dia7=dia...
-        // Grupo C: dia3=dia, dia4=noite, folga5,6,7, dia8=dia...
-        // Padrão: grupo gi trabalha no dia (d) se:
-        //   posição no ciclo = (d-1) % n
-        //   trabalha turno dia  quando (d-1-gi) % n === 0
-        //   trabalha turno noite quando (d-gi) % n === 0  (dia seguinte)
+        // 12x24x72 — ciclo de 5 dias: 1 DIA + 1 NOITE + 3 FOLGAS
+        // A: DIA dia1, NOITE dia2, folga 3,4,5
+        // B: NOITE dia1, folga 2,3,4, DIA dia5, NOITE dia6...
+        // C: DIA dia2, NOITE dia3, folga 4,5,6
+        // D: NOITE dia2, folga 3,4,5, DIA dia6... (mesmo pos A, turno noite)
+        // E: DIA dia3, NOITE dia4, folga 5,6,7
+        const SLOTS = {A:{dia:0,noite:1},B:{dia:4,noite:0},C:{dia:1,noite:2},D:{dia:0,noite:1},E:{dia:2,noite:3}};
+        const s = SLOTS[gId]||{dia:0,noite:1};
         for (let d=1; d<=diasNoMes; d++) {
-          if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = legDia;      // 1º dia do par
-          if ((d-1-gi-1+n) % n === 0) novasCelulas[pid+"_"+d] = legNoite; // 2º dia do par
+          const pos=(d-1)%5;
+          if(pos===s.dia)   novasCelulas[pid+"_"+d]=legDia;
+          if(pos===s.noite) novasCelulas[pid+"_"+d]=legNoite;
         }
       }
 
@@ -4734,60 +4735,51 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
   }
 
   // ── Modal criar/editar pelotão ──
-  function ModalFormPelotao({title, onSave, onClose}) {
-    return (
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
-        <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:540,overflow:"hidden"}}>
-          <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"13px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{color:"#fff",fontWeight:700,fontSize:14}}>{title}</span>
-            <button onClick={onClose} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"3px 10px",cursor:"pointer"}}>✕</button>
-          </div>
-          <div style={{padding:20}}>
-            <Input label="Nome do pelotão" value={formPel.nome} onChange={e=>setFP("nome",e.target.value)} placeholder="Ex: 1º Pelotão"/>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Comandante de pelotão</div>
-              <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{setFP("comandanteId",cleanMat(o.matricula));setFP("comandanteNome",o.grau+" "+o.nome);}}/>
-              {formPel.comandanteNome&&<div style={{background:"#f0f4ff",borderRadius:6,padding:"5px 10px",fontSize:12,marginTop:5}}>{formPel.comandanteNome}</div>}
-            </div>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Locais de trabalho vinculados</div>
-              <div style={{fontSize:11,color:"#6b7280",marginBottom:6}}>Os policiais lotados nestes locais serão incluídos automaticamente no efetivo do pelotão.</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,maxHeight:200,overflowY:"auto",padding:4}}>
-                {(locations||[]).map(loc=>{
-                  const sel = formPel.locais.includes(loc);
-                  return (
-                    <button key={loc} onClick={()=>toggleLocal(loc)}
-                      style={{padding:"4px 10px",borderRadius:6,border:"2px solid "+(sel?"#1e3a5f":"#e5e7eb"),background:sel?"#1e3a5f":"#fff",color:sel?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:sel?600:400}}>
-                      {loc}
-                    </button>
-                  );
-                })}
-                {(!locations||!locations.length)&&<span style={{fontSize:11,color:"#9ca3af"}}>Nenhum local cadastrado.</span>}
-              </div>
-              {formPel.locais.length>0&&<div style={{fontSize:11,color:"#1e3a5f",marginTop:4,fontWeight:500}}>{formPel.locais.length} local(is) selecionado(s)</div>}
-            </div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
-              <Btn onClick={onSave}>💾 Salvar</Btn>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // ── Tela de listagem ──
   return (
     <div>
       {confirm&&<Confirm msg={confirm.msg} onYes={()=>{confirm.action();setConfirm(null);}} onNo={()=>setConfirm(null)}/>}
 
-      {modalNovo&&(
-        <ModalFormPelotao title="Novo pelotão" onClose={()=>setModalNovo(false)}
-          onSave={()=>savePelotao(formPel, false)}/>
-      )}
-      {modalEditar&&(
-        <ModalFormPelotao title={"Editar — "+modalEditar.nome} onClose={()=>setModalEditar(null)}
-          onSave={()=>savePelotao(formPel, modalEditar.id)}/>
+      {(modalNovo||modalEditar)&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:12,width:"100%",maxWidth:540,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"13px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:14}}>{modalNovo?"Novo pelotão":"Editar — "+(modalEditar?.nome||"")}</span>
+              <button onClick={()=>{setModalNovo(false);setModalEditar(null);}} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"3px 10px",cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{padding:20}}>
+              <div style={{marginBottom:12}}>
+                <label style={{display:"block",fontSize:12,fontWeight:600,color:"#374151",marginBottom:4}}>Nome do pelotão</label>
+                <input value={formPel.nome} onChange={e=>setFP("nome",e.target.value)} placeholder="Ex: 1º Pelotão"
+                  style={{width:"100%",padding:"8px 10px",border:"1px solid #d1d5db",borderRadius:8,fontSize:13,outline:"none",boxSizing:"border-box"}}/>
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Comandante de pelotão</div>
+                <BuscaPolicial officers={officers} excluirIds={[]} onSelect={o=>{setFP("comandanteId",cleanMat(o.matricula));setFP("comandanteNome",o.grau+" "+o.nome);}}/>
+                {formPel.comandanteNome&&<div style={{background:"#f0f4ff",borderRadius:6,padding:"5px 10px",fontSize:12,marginTop:5}}>{formPel.comandanteNome}</div>}
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Locais de trabalho vinculados</div>
+                <div style={{fontSize:11,color:"#6b7280",marginBottom:6}}>Os policiais lotados nestes locais serão incluídos automaticamente no efetivo do pelotão.</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,maxHeight:200,overflowY:"auto",padding:4}}>
+                  {(locations||[]).map(loc=>{
+                    const sel=formPel.locais.includes(loc);
+                    return <button key={loc} onClick={()=>toggleLocal(loc)}
+                      style={{padding:"4px 10px",borderRadius:6,border:"2px solid "+(sel?"#1e3a5f":"#e5e7eb"),background:sel?"#1e3a5f":"#fff",color:sel?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:sel?600:400}}>
+                      {loc}
+                    </button>;
+                  })}
+                  {(!locations||!locations.length)&&<span style={{fontSize:11,color:"#9ca3af"}}>Nenhum local cadastrado.</span>}
+                </div>
+                {formPel.locais.length>0&&<div style={{fontSize:11,color:"#1e3a5f",marginTop:4,fontWeight:500}}>{formPel.locais.length} local(is) selecionado(s)</div>}
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                <Btn variant="secondary" onClick={()=>{setModalNovo(false);setModalEditar(null);}}>Cancelar</Btn>
+                <Btn onClick={()=>modalNovo?savePelotao(formPel,false):savePelotao(formPel,modalEditar.id)}>💾 Salvar</Btn>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
