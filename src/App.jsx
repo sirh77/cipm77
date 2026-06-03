@@ -4101,8 +4101,10 @@ const HORAS_LEGENDA = {
   F5:24, G1:15, H5:16, M3:12, R19:12, R20:12, R21:12,
   CR:0, F:0, JMS:0, LP:0, AT:0, D:0, P:0, LM:0,
 };
+// Horas noturnas (22h-05h = 7h) por legenda
 const NOTURNO_LEGENDA = {
-  A11:7, C2:7, C11:3, C9:7, R20:7, F5:7,
+  A11:7, C2:7, C11:3, C9:7, R20:7,
+  F5:7,  // 24x96: das 22h às 05h = 7h noturnas
 };
 const GRUPO_CORES = {
   A:["#1e3a5f","#fff"], B:["#15803d","#fff"],
@@ -4233,9 +4235,9 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
 
       if (e.tipo==="24x96") {
         // Cada grupo trabalha 1 dia e folga 4 (ciclo de 5)
-        // Grupo A: dias 1,6,11,16... Grupo B: dias 2,7,12... etc.
+        // Legenda 24x96 = F5 (06h às 06h = 24h)
         for (let d=1; d<=diasNoMes; d++) {
-          if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = legDia;
+          if ((d-1-gi) % n === 0) novasCelulas[pid+"_"+d] = "F5";
         }
       } else {
         // 12x24x72 — ciclo de 5 dias: 1 DIA + 1 NOITE + 3 FOLGAS
@@ -4647,10 +4649,13 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
     setModalNovo(false); setModalEditar(null);
   }
 
-  function canAccess(pel) {
+  function canView() { return true; } // Todos podem visualizar
+  function canEdit(pel) {
     if (perm.admin) return true;
     if (!pel.comandanteId) return false;
-    return pel.comandanteId===loggedUser?.matricula||pel.comandanteId===String(loggedUser?.id);
+    return pel.comandanteId===loggedUser?.matricula ||
+           pel.comandanteId===String(loggedUser?.id) ||
+           cleanMat(pel.comandanteId)===cleanMat(loggedUser?.matricula||"");
   }
 
   const ABAS_PEL = ["efetivo","escala","extras","ocorrências","saúde","vantagens"];
@@ -4665,14 +4670,7 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
     const pel = pelotoes.find(p=>p.id===pelSel);
     if (!pel) { setPelSel(null); return null; }
 
-    if (!canAccess(pel)) return (
-      <div style={{textAlign:"center",padding:60}}>
-        <div style={{fontSize:40,marginBottom:12}}>🔒</div>
-        <div style={{fontSize:16,fontWeight:700,color:"#991b1b",marginBottom:8}}>Acesso negado.</div>
-        <div style={{fontSize:13,color:"#6b7280",marginBottom:20}}>Acesso permitido apenas para o comandante de pelotão.</div>
-        <Btn variant="secondary" onClick={()=>setPelSel(null)}>← Voltar</Btn>
-      </div>
-    );
+    // canEdit controls edit buttons; all users can view
 
     const manualKey = mes+"_"+ano;
     const cmd = officers.find(o=>cleanMat(o.matricula)===pel.comandanteId||String(o.id)===pel.comandanteId);
@@ -4807,7 +4805,7 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
               onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none";}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                 <div style={{fontWeight:700,fontSize:15,color:"#1e3a5f"}}>&#128081; {pel.nome}</div>
-                <Badge color={acesso?"#dcfce7":"#fee2e2"} textColor={acesso?"#15803d":"#991b1b"} size={10}>{acesso?"✓":"🔒"}</Badge>
+                <Badge color={canEdit(pel)?"#dbeafe":"#dcfce7"} textColor={canEdit(pel)?"#1d4ed8":"#15803d"} size={10}>{canEdit(pel)?"✏️ Editar":"👁 Ver"}</Badge>
               </div>
               <div style={{fontSize:12,color:"#6b7280",marginBottom:4}}>{count} policial(is)</div>
               {(pel.locais||[]).length>0&&(
@@ -4818,15 +4816,15 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
               {cmd
                 ? <div style={{fontSize:11,background:"#f0f4ff",borderRadius:5,padding:"3px 8px",color:"#1d4ed8",marginBottom:8}}>Cmt: {cmd.grau} {cmd.nome}</div>
                 : <div style={{fontSize:11,color:"#d97706",marginBottom:8}}>⚠️ Sem comandante</div>}
-              {perm.admin&&(
+              {canEdit(pel)&&(
                 <div style={{display:"flex",gap:5}} onClick={e=>e.stopPropagation()}>
                   <button onClick={()=>{
                     const cmd2=officers.find(o=>cleanMat(o.matricula)===pel.comandanteId||String(o.id)===pel.comandanteId);
                     setFormPel({nome:pel.nome,comandanteId:pel.comandanteId||"",locais:pel.locais||[],comandanteNome:cmd2?cmd2.grau+" "+cmd2.nome:""});
                     setModalEditar(pel);
                   }} style={{flex:1,background:"#f3f4f6",border:"none",borderRadius:5,padding:"4px",fontSize:11,cursor:"pointer"}}>✏️ Editar</button>
-                  <button onClick={()=>setConfirm({msg:"Excluir pelotão "+pel.nome+"?",action:()=>setPelotoes(ps=>ps.filter(p=>p.id!==pel.id))})}
-                    style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",fontSize:11,cursor:"pointer",color:"#dc2626"}}>🗑</button>
+                  {perm.admin&&<button onClick={()=>setConfirm({msg:"Excluir pelotão "+pel.nome+"?",action:()=>setPelotoes(ps=>ps.filter(p=>p.id!==pel.id))})}
+                    style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",fontSize:11,cursor:"pointer",color:"#dc2626"}}>🗑</button>}
                 </div>
               )}
             </div>
