@@ -4797,7 +4797,7 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
         {pelotoes.map(pel=>{
           const cmd = officers.find(o=>cleanMat(o.matricula)===pel.comandanteId||String(o.id)===pel.comandanteId);
           const count = officers.filter(o=>(pel.locais||[]).includes(o.localTrabalho||"")).length;
-          const acesso = canAccess(pel);
+          const acesso = canEdit(pel);
           return (
             <div key={pel.id} style={{background:"#fff",border:"2px solid "+(acesso?"#1e3a5f":"#e5e7eb"),borderRadius:10,padding:16,cursor:"pointer",transition:"all 0.15s",opacity:acesso?1:0.65}}
               onClick={()=>setPelSel(pel.id)}
