@@ -26,4 +26,6 @@ export const KEY_MAP = {
   'sirh_corr_numeracao':  { table: 'config', type: 'config', key: 'numeracao' },
   'sirh_corr_prazos':     { table: 'config', type: 'config', key: 'prazos' },
   'sirh_users':           { table: 'app_users' },
+  'sirh_pelotoes':        { table: 'pelotoes' },
+  'sirh_escalas':         { table: 'escalas' },
 }
