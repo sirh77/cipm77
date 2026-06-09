@@ -4843,16 +4843,17 @@ const MODULOS_SISTEMA = [
   {id:"cursos",      label:"Cursos"},
   {id:"vantagens",   label:"Vantagens"},
   {id:"corregedoria",label:"Corregedoria"},
+  {id:"pelotao",     label:"Pelotão"},
   {id:"exportar",    label:"Exportar"},
 ];
 
 // Permissões padrão por perfil
 const PERMS_PADRAO = {
-  "Admin":        {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"editar",exportar:"editar"},
-  "SSO":          {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"ver",exportar:"ver"},
-  "SPO":          {efetivo:"ver",locais:"ver",ferias:"ver",saude:"ver",cursos:"ver",vantagens:"ver",corregedoria:"ver",exportar:"nenhum"},
-  "ALMOX":        {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"ver",corregedoria:"nenhum",exportar:"ver"},
-  "Corregedoria": {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"nenhum",corregedoria:"editar",exportar:"nenhum"},
+  "Admin":        {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"editar",pelotao:"editar",exportar:"editar"},
+  "SSO":          {efetivo:"editar",locais:"editar",ferias:"editar",saude:"editar",cursos:"editar",vantagens:"editar",corregedoria:"ver",pelotao:"ver",exportar:"ver"},
+  "SPO":          {efetivo:"ver",locais:"ver",ferias:"ver",saude:"ver",cursos:"ver",vantagens:"ver",corregedoria:"ver",pelotao:"ver",exportar:"nenhum"},
+  "ALMOX":        {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"ver",corregedoria:"nenhum",pelotao:"ver",exportar:"ver"},
+  "Corregedoria": {efetivo:"ver",locais:"nenhum",ferias:"nenhum",saude:"nenhum",cursos:"nenhum",vantagens:"nenhum",corregedoria:"editar",pelotao:"ver",exportar:"nenhum"},
 };
 
 function ModAdmin({ users, setUsers, officers }) {
@@ -5624,6 +5625,7 @@ export default function App() {
     verVantagens:   userMods.vantagens!=="nenhum",
     verCorregedoria:userMods.corregedoria!=="nenhum",
     verExportar:    userMods.exportar!=="nenhum",
+    verPelotao:     (userMods.pelotao||"ver")!=="nenhum",
     // Legacy compat
     sso: userMods.saude!=="nenhum" || userMods.ferias!=="nenhum",
   };
@@ -5638,7 +5640,7 @@ export default function App() {
     {id:"vantagens",    label:"Vantagens",    icon:"⭐", show:perm.verVantagens||perm.admin},
     {id:"corregedoria", label:"Corregedoria", icon:"⚖️", show:perm.verCorregedoria||perm.admin},
     {id:"exportar",     label:"Exportar",     icon:"📊", show:perm.verExportar||perm.admin},
-    {id:"pelotao",      label:"Pelotão",     icon:"👥", show:true},
+    {id:"pelotao",      label:"Pelotão",     icon:"👥", show:perm.verPelotao||perm.admin},
     {id:"admin",        label:"Admin",        icon:"⚙️", show:perm.admin},
   ].filter(n=>n.show);
 
