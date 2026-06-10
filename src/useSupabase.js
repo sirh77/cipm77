@@ -110,7 +110,8 @@ async function fetchData(localKey, mapping) {
 
   const { data, error } = await supabase.from(mapping.table).select('*')
   if (error) throw error
-  return (data || []).map(r => ({ ...r.data, id: r.id }))
+  // Supabase returns bigint IDs as strings — normalize to number to match local state
+  return (data || []).map(r => ({ ...r.data, id: Number(r.id) }))
 }
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────

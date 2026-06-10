@@ -7,7 +7,7 @@
 */
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useSupabaseState, useGlobalLoading } from "./useSupabase.js";
-import { isConfigured } from "./supabase.js";
+import { supabase, isConfigured } from "./supabase.js";
 
 // ──────────────────────────────────────────────
 // DADOS INICIAIS (importados da planilha PECÚLIO)
@@ -4629,6 +4629,21 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
   const [mes, setMes] = useState(hoje.getMonth()+1);
   const [ano, setAno] = useState(hoje.getFullYear());
   const [pelSel, setPelSel] = useState(null);
+  const [dbStatus, setDbStatus] = useState(null); // null=checking, true=ok, false=error
+
+  // Diagnóstico: verifica se a tabela pelotoes existe e está acessível
+  useEffect(()=>{
+    if (!isConfigured) { setDbStatus("local"); return; }
+    supabase.from("pelotoes").select("id").limit(1)
+      .then(({error})=>{
+        if (error) {
+          console.error("[SiRH77] Tabela pelotoes inacessível:", error.message);
+          setDbStatus("error:" + error.message);
+        } else {
+          setDbStatus("ok");
+        }
+      });
+  }, []);
   const [aba, setAba] = useState("efetivo");
   const [modalNovo, setModalNovo] = useState(false);
   const [modalEditar, setModalEditar] = useState(null);
@@ -4784,6 +4799,14 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>&#128081; Gestão de Pelotão</h2>
         {perm.admin&&<Btn onClick={()=>{setFormPel({nome:"",comandanteId:"",locais:[],comandanteNome:""});setModalNovo(true);}}>+ Novo pelotão</Btn>}
       </div>
+      {/* Status do banco */}
+      {dbStatus && dbStatus!=="ok" && (
+        <div style={{background: dbStatus==="local"?"#fef3c7":"#fee2e2", border:"1px solid "+(dbStatus==="local"?"#fcd34d":"#fca5a5"), borderRadius:8, padding:"8px 14px", marginBottom:12, fontSize:12}}>
+          {dbStatus==="local"
+            ? "⚠️ Supabase não configurado — dados salvos apenas localmente neste navegador."
+            : "❌ Erro ao acessar tabela 'pelotoes' no Supabase: "+dbStatus.replace("error:","")+" — Execute o SQL de criação de tabelas no painel do Supabase."}
+        </div>
+      )}
 
       {pelotoes.length===0&&(
         <div style={{textAlign:"center",padding:48,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
