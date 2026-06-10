@@ -34,6 +34,15 @@ export function useSupabaseState(localKey, initialValue) {
           .then(result => { memCache[localKey] = result; return result })
           .catch(err => {
             console.error(`[SiRH77] Erro ao carregar ${localKey}:`, err)
+            // Fallback: try localStorage before using initialValue
+            try {
+              const s = localStorage.getItem(localKey)
+              if (s) {
+                const parsed = JSON.parse(s)
+                memCache[localKey] = parsed
+                return parsed
+              }
+            } catch {}
             const fallback = typeof initialValue === 'function' ? initialValue() : initialValue
             memCache[localKey] = fallback
             return fallback

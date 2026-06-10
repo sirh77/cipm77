@@ -4123,6 +4123,14 @@ function calcHoras(cellMap, diasNoMes) {
 }
 
 // ─── Aba Escala ──────────────────────────────────────────────────────────────
+// Calcula horas de uma escala extra (suporta virada de meia-noite)
+function calcHorasExtra(hi, hf) {
+  const toMin = t => { const [h,m]=(t||"00:00").split(":").map(Number); return h*60+m; };
+  let mins = toMin(hf) - toMin(hi);
+  if (mins <= 0) mins += 24*60;
+  return Math.round(mins*10/60)/10;
+}
+
 function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras, onGoExtra, ferias, afastamentos }) {
   const [escalaSel, setEscalaSel] = useState(null);
   const [modalCriar, setModalCriar] = useState(false);
