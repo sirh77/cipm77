@@ -4123,7 +4123,7 @@ function calcHoras(cellMap, diasNoMes) {
 }
 
 // ─── Aba Escala ──────────────────────────────────────────────────────────────
-function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
+function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras }) {
   // ── state ──────────────────────────────────────────────────────────────────
   const [escalaSel, setEscalaSel] = useState(null); // id da sub-escala selecionada
   const [modalCriar, setModalCriar] = useState(false);
@@ -4492,6 +4492,10 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
                         {membrosOrdenados.map(pid=>{
                           const o=officers.find(x=>x.id===pid); if(!o) return null;
                           const {total,noturno} = calcHorasPolicial(escalaAtual, pid);
+                          // Extras VD/HE para este policial no mês
+                          const extrasAtivas = (escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+                          const horasVD = extrasAtivas.filter(e=>e.tipo==="VD").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
+                          const horasHE = extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
                           return (
                             <tr key={pid}>
                               <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -4502,21 +4506,24 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
                               </td>
                               {dias.map(d=>{
                                 const leg=(escalaAtual.celulas||{})[pid+"_"+d];
+                                // Sigla de escala extra neste dia
+                                const extraDia = extrasAtivas.find(e=>(e.dias||[]).some(dd=>dd.dia===d&&(dd.policiais||[]).includes(pid)));
                                 const ds=DS[(pDia+d-1)%7];
                                 const isW=ds==="Sab"||ds==="Dom";
                                 const isH=isCurrentMonth&&d===diaHoje;
                                 const bg=leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#eff6ff":isW?"#fff5f5":"#fff";
                                 return (
-                                  <td key={d} style={{...tdS,background:bg,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb"}}
+                                  <td key={d} style={{...tdS,background:bg,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb",position:"relative"}}
                                     onClick={()=>{setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg(leg||"");}}>
                                     {leg||""}
+                                    {extraDia&&<span style={{position:"absolute",top:0,right:0,background:"#7c3aed",color:"#fff",fontSize:7,fontWeight:700,padding:"0px 2px",borderRadius:"0 0 0 3px",lineHeight:"10px"}}>{extraDia.sigla}</span>}
                                   </td>
                                 );
                               })}
                               <td style={{...tdS,fontWeight:700,background:"#f0f4ff"}}>{noturno||""}</td>
                               <td style={{...tdS,fontWeight:700,color:"#1e3a5f",background:"#dbeafe"}}>{total||""}</td>
-                              <td style={{...tdS,background:"#f9fafb"}}></td>
-                              <td style={{...tdS,background:"#f9fafb"}}></td>
+                              <td style={{...tdS,background:"#fef3c7",fontWeight:700,color:"#92400e",fontSize:10}}>{horasVD||""}</td>
+                              <td style={{...tdS,background:"#dcfce7",fontWeight:700,color:"#15803d",fontSize:10}}>{horasHE||""}</td>
                             </tr>
                           );
                         })}
@@ -4544,6 +4551,285 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano }) {
     </div>
   );
 }
+
+// ─── Aba Extras ──────────────────────────────────────────────────────────────
+function calcHorasExtra(hi, hf) {
+  const toMin = t => { const [h,m]=(t||"00:00").split(":").map(Number); return h*60+m; };
+  let mins = toMin(hf) - toMin(hi);
+  if (mins <= 0) mins += 24*60;
+  return Math.round(mins*10/60)/10;
+}
+
+function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, ano }) {
+  const [modalNova, setModalNova] = useState(false);
+  const [extSel, setExtSel]       = useState(null);
+  const [modalDia, setModalDia]   = useState(false);
+  const [modalAddPol, setModalAddPol] = useState(null); // {extraId, diaId}
+  const [conflito, setConflito]   = useState(null);
+  const [formExt, setFormExt]     = useState({nome:"", sigla:"", tipo:"HE"});
+  const [formDia, setFormDia]     = useState({dia:1, horaInicio:"16:00", horaFim:"22:00"});
+  const setFE = (k,v)=>setFormExt(f=>({...f,[k]:v}));
+  const setFD = (k,v)=>setFormDia(f=>({...f,[k]:v}));
+
+  const MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const extrasDoMes = escExtras.filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+  const extAtual    = extSel ? extrasDoMes.find(e=>e.id===extSel) : extrasDoMes[0]||null;
+
+  // Escala ordinária do período (para detecção de conflito)
+  const escOrd = escalas.filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+
+  function criarExtra() {
+    if (!formExt.nome.trim()||!formExt.sigla.trim()) { alert("Nome e sigla obrigatórios."); return; }
+    const nova = {
+      id:Date.now(), pelotaoId:pelotao.id, mes, ano,
+      nome:formExt.nome.trim().toUpperCase(),
+      sigla:formExt.sigla.trim().toUpperCase().slice(0,3),
+      tipo:formExt.tipo, dias:[]
+    };
+    setEscExtras(es=>[...es,nova]);
+    setExtSel(nova.id);
+    setModalNova(false);
+    setFormExt({nome:"",sigla:"",tipo:"HE"});
+  }
+
+  function addDia() {
+    if (!extAtual) return;
+    const novoDia = {
+      id:Date.now(), dia:formDia.dia,
+      horaInicio:formDia.horaInicio, horaFim:formDia.horaFim,
+      horas:calcHorasExtra(formDia.horaInicio,formDia.horaFim),
+      policiais:[]
+    };
+    setEscExtras(es=>es.map(e=>e.id!==extAtual.id?e:{...e,dias:[...e.dias,novoDia]}));
+    setModalDia(false);
+    setFormDia({dia:1,horaInicio:"16:00",horaFim:"22:00"});
+  }
+
+  function removeDia(extraId, diaId) {
+    setEscExtras(es=>es.map(e=>e.id!==extraId?e:{...e,dias:e.dias.filter(d=>d.id!==diaId)}));
+  }
+
+  function removeExtra(extraId) {
+    setEscExtras(es=>es.filter(e=>e.id!==extraId));
+    if (extSel===extraId) setExtSel(null);
+  }
+
+  function tentarAddPolicial(extraId, diaId, pid) {
+    const extra = escExtras.find(e=>e.id===extraId);
+    const diaObj = extra?.dias?.find(d=>d.id===diaId);
+    if (!diaObj) return;
+    // Verifica conflito com escala ordinária
+    const conflitando = escOrd.find(eo=>{
+      const leg = (eo.celulas||{})[pid+"_"+diaObj.dia];
+      return leg && !["F","JMS","AT","LP","CR","D","P","LM"].includes(leg);
+    });
+    if (conflitando) {
+      const o = officers.find(x=>x.id===pid);
+      const leg = (conflitando.celulas||{})[pid+"_"+diaObj.dia];
+      setConflito({
+        msg:`${o?.grau||""} ${o?.nome||""} já tem serviço ordinário (${leg}) no dia ${diaObj.dia}/${mes}. Deseja incluir na escala extra mesmo assim?`,
+        onSim:()=>{ doAddPolicial(extraId,diaId,pid); setConflito(null); },
+        onNao:()=>setConflito(null)
+      });
+      return;
+    }
+    doAddPolicial(extraId, diaId, pid);
+  }
+
+  function doAddPolicial(extraId, diaId, pid) {
+    setEscExtras(es=>es.map(e=>e.id!==extraId?e:{
+      ...e, dias:e.dias.map(d=>d.id!==diaId?d:{
+        ...d, policiais:[...new Set([...(d.policiais||[]),pid])]
+      })
+    }));
+    setModalAddPol(null);
+  }
+
+  function removePolicial(extraId, diaId, pid) {
+    setEscExtras(es=>es.map(e=>e.id!==extraId?e:{
+      ...e, dias:e.dias.map(d=>d.id!==diaId?d:{
+        ...d, policiais:(d.policiais||[]).filter(x=>x!==pid)
+      })
+    }));
+  }
+
+  const diasNoMes = new Date(ano,mes,0).getDate();
+  const [bgTipo,fgTipo] = extAtual?.tipo==="HE" ? ["#fef3c7","#92400e"] : ["#dbeafe","#1d4ed8"];
+
+  return (
+    <div>
+      {/* Modal conflito */}
+      {conflito&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000}}>
+          <div style={{background:"#fff",borderRadius:12,padding:24,maxWidth:420,width:"90%",boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+            <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
+            <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#92400e"}}>Conflito de horário detectado</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:16,lineHeight:1.5}}>{conflito.msg}</div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="secondary" onClick={conflito.onNao}>Cancelar</Btn>
+              <Btn onClick={conflito.onSim}>Incluir mesmo assim</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal nova escala extra */}
+      {modalNova&&(
+        <Modal title="Nova escala extra" onClose={()=>setModalNova(false)}>
+          <Input label="Nome da escala" value={formExt.nome} onChange={e=>setFE("nome",e.target.value)} placeholder="Ex: MOTOPATRULHAMENTO 2X2"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <Input label="Sigla (até 3 letras)" value={formExt.sigla} onChange={e=>setFE("sigla",e.target.value.toUpperCase().slice(0,3))} placeholder="Ex: M"/>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:4}}>Tipo</div>
+              <div style={{display:"flex",gap:8}}>
+                {["HE","VD"].map(t=>(
+                  <button key={t} onClick={()=>setFE("tipo",t)}
+                    style={{flex:1,padding:"8px",border:"2px solid "+(formExt.tipo===t?"#1e3a5f":"#e5e7eb"),borderRadius:7,background:formExt.tipo===t?"#1e3a5f":"#fff",color:formExt.tipo===t?"#fff":"#374151",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    {t==="HE"?"⏱ Hora Extra":"📅 VD"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",fontSize:11,color:"#374151",marginTop:4}}>
+            <strong>{formExt.sigla||"?"}</strong> aparecerá na escala ordinária. Horas serão somadas na coluna <strong>{formExt.tipo}</strong>.
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalNova(false)}>Cancelar</Btn>
+            <Btn onClick={criarExtra}>✓ Criar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal adicionar dia */}
+      {modalDia&&(
+        <Modal title="Adicionar dia" onClose={()=>setModalDia(false)}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Dia do mês</div>
+              <select value={formDia.dia} onChange={e=>setFD("dia",Number(e.target.value))}
+                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <Input label="Hora início" type="time" value={formDia.horaInicio} onChange={e=>setFD("horaInicio",e.target.value)}/>
+            <Input label="Hora fim" type="time" value={formDia.horaFim} onChange={e=>setFD("horaFim",e.target.value)}/>
+          </div>
+          <div style={{background:"#f0f4ff",borderRadius:7,padding:"7px 10px",fontSize:12,marginTop:6}}>
+            Duração: <strong>{calcHorasExtra(formDia.horaInicio,formDia.horaFim)}h</strong>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
+            <Btn variant="secondary" onClick={()=>setModalDia(false)}>Cancelar</Btn>
+            <Btn onClick={addDia}>✓ Adicionar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal adicionar policial ao dia */}
+      {modalAddPol&&(
+        <Modal title={`Adicionar policial — Dia ${escExtras.find(e=>e.id===modalAddPol.extraId)?.dias?.find(d=>d.id===modalAddPol.diaId)?.dia}/${mes}`}
+          onClose={()=>setModalAddPol(null)}>
+          <BuscaPolicial officers={officers}
+            excluirIds={escExtras.find(e=>e.id===modalAddPol.extraId)?.dias?.find(d=>d.id===modalAddPol.diaId)?.policiais||[]}
+            onSelect={o=>tentarAddPolicial(modalAddPol.extraId,modalAddPol.diaId,o.id)}/>
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+            <Btn variant="secondary" onClick={()=>setModalAddPol(null)}>Fechar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Abas de escalas extras + botão criar */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
+          {extrasDoMes.map(e=>(
+            <button key={e.id} onClick={()=>setExtSel(e.id)}
+              style={{padding:"5px 12px",border:"2px solid "+(extSel===e.id||(!extSel&&extrasDoMes[0]?.id===e.id)?"#1e3a5f":"#e5e7eb"),borderRadius:6,background:extSel===e.id||(!extSel&&extrasDoMes[0]?.id===e.id)?"#1e3a5f":"#fff",color:extSel===e.id||(!extSel&&extrasDoMes[0]?.id===e.id)?"#fff":"#374151",fontSize:12,cursor:"pointer",fontWeight:600}}>
+              <span style={{background:bgTipo,color:fgTipo,borderRadius:4,padding:"1px 5px",fontSize:10,marginRight:5}}>{e.sigla}</span>
+              {e.nome}
+            </button>
+          ))}
+          <button onClick={()=>setModalNova(true)}
+            style={{padding:"5px 12px",border:"2px dashed #d1d5db",borderRadius:6,background:"transparent",color:"#6b7280",fontSize:12,cursor:"pointer"}}>
+            + Incluir escala
+          </button>
+        </div>
+        {extAtual&&(
+          <button onClick={()=>removeExtra(extAtual.id)}
+            style={{background:"#fee2e2",border:"none",borderRadius:6,padding:"5px 10px",color:"#dc2626",fontSize:12,cursor:"pointer",marginLeft:8}}>
+            🗑 Excluir
+          </button>
+        )}
+      </div>
+
+      {/* Conteúdo da escala extra selecionada */}
+      {extAtual&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,background:"#f8faff",borderRadius:8,padding:"8px 12px",border:"1px solid #e5e7eb"}}>
+            <div>
+              <span style={{fontWeight:700,fontSize:14,color:"#1e3a5f"}}>{extAtual.nome}</span>
+              <span style={{marginLeft:10,background:bgTipo,color:fgTipo,borderRadius:5,padding:"2px 8px",fontSize:11,fontWeight:600}}>{extAtual.tipo}</span>
+              <span style={{marginLeft:6,background:"#e5e7eb",color:"#374151",borderRadius:5,padding:"2px 8px",fontSize:11,fontWeight:700}}>Sigla: {extAtual.sigla}</span>
+            </div>
+            <Btn small onClick={()=>setModalDia(true)}>+ Adicionar dia</Btn>
+          </div>
+
+          {extAtual.dias.length===0&&(
+            <div style={{textAlign:"center",padding:32,color:"#9ca3af",background:"#f9fafb",borderRadius:8,border:"2px dashed #e5e7eb"}}>
+              Nenhum dia cadastrado. Clique em "+ Adicionar dia" para começar.
+            </div>
+          )}
+
+          {[...extAtual.dias].sort((a,b)=>a.dia-b.dia).map(d=>{
+            const horas = calcHorasExtra(d.horaInicio,d.horaFim);
+            return (
+              <div key={d.id} style={{border:"1px solid #e5e7eb",borderRadius:8,marginBottom:10,overflow:"hidden"}}>
+                <div style={{background:"#1e3a5f",color:"#fff",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontWeight:700,fontSize:13}}>
+                    Dia {d.dia}/{mes} — {d.horaInicio}h às {d.horaFim}h
+                    <span style={{marginLeft:10,background:"rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 7px",fontSize:11}}>{horas}h</span>
+                  </div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <button onClick={()=>setModalAddPol({extraId:extAtual.id,diaId:d.id})}
+                      style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:5,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
+                      + Policial
+                    </button>
+                    <button onClick={()=>removeDia(extAtual.id,d.id)}
+                      style={{background:"rgba(239,68,68,0.3)",border:"none",color:"#fff",borderRadius:5,padding:"3px 8px",fontSize:12,cursor:"pointer"}}>🗑</button>
+                  </div>
+                </div>
+                <div style={{padding:8,display:"flex",flexWrap:"wrap",gap:6}}>
+                  {(d.policiais||[]).map(pid=>{
+                    const o=officers.find(x=>x.id===pid); if(!o) return null;
+                    return (
+                      <div key={pid} style={{display:"flex",alignItems:"center",gap:6,background:"#f0f4ff",borderRadius:6,padding:"4px 10px",fontSize:12}}>
+                        <span><strong>{o.grau}</strong> {o.nome.split(" ").slice(0,2).join(" ")}</span>
+                        <button onClick={()=>removePolicial(extAtual.id,d.id,pid)}
+                          style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:12,lineHeight:1}}>✕</button>
+                      </div>
+                    );
+                  })}
+                  {(!d.policiais||d.policiais.length===0)&&(
+                    <span style={{fontSize:11,color:"#9ca3af"}}>Nenhum policial adicionado.</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {extrasDoMes.length===0&&(
+        <div style={{textAlign:"center",padding:40,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
+          <div style={{fontSize:28,marginBottom:8}}>📋</div>
+          <div style={{fontWeight:500}}>Nenhuma escala extra para {["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1]}/{ano}</div>
+          <div style={{marginTop:10}}><Btn onClick={()=>setModalNova(true)}>+ Incluir escala</Btn></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Aba Efetivo Pelotão ─────────────────────────────────────────────────────
 function AbaEfetivoPelotao({ pelotao, officers, afastamentos, ferias, mes, ano }) {
   const [fSit, setFSit] = useState("todos");
@@ -4624,7 +4910,7 @@ function AbaEfetivoPelotao({ pelotao, officers, afastamentos, ferias, mes, ano }
 }
 
 // ─── ModPelotao principal ────────────────────────────────────────────────────
-function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPelotoes, escalas, setEscalas, loggedUser, perm, locations }) {
+function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPelotoes, escalas, setEscalas, escExtras, setEscExtras, loggedUser, perm, locations }) {
   const hoje = new Date();
   const [mes, setMes] = useState(hoje.getMonth()+1);
   const [ano, setAno] = useState(hoje.getFullYear());
@@ -4736,8 +5022,9 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
         </div>
 
         {aba==="efetivo"&&<AbaEfetivoPelotao pelotao={pel} officers={officers} afastamentos={afastamentos} ferias={ferias} mes={mes} ano={ano}/>}
-        {aba==="escala"&&<AbaEscala pelotao={pel} escalas={escalas} setEscalas={setEscalas} officers={officers} mes={mes} ano={ano} afastamentos={afastamentos} ferias={ferias}/>}
-        {["extras","ocorrências","saúde","vantagens"].includes(aba)&&(
+        {aba==="escala"&&<AbaEscala pelotao={pel} escalas={escalas} setEscalas={setEscalas} officers={officers} mes={mes} ano={ano} afastamentos={afastamentos} ferias={ferias} escExtras={escExtras}/>}
+        {aba==="extras"&&<AbaExtras pelotao={pel} escExtras={escExtras} setEscExtras={setEscExtras} escalas={escalas} officers={officers} mes={mes} ano={ano}/>}
+        {["ocorrências","saúde","vantagens"].includes(aba)&&(
           <div style={{textAlign:"center",padding:40,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
             <div style={{fontSize:28,marginBottom:8}}>🚧</div>
             <div style={{fontWeight:500,fontSize:14}}>Aba <strong>{aba.toUpperCase()}</strong> em desenvolvimento</div>
@@ -5625,6 +5912,7 @@ export default function App() {
   const [users, setUsers] = useSupabaseState("sirh_users", USUARIOS_INICIAIS);
   const [pelotoes, setPelotoes] = useSupabaseState("sirh_pelotoes", []);
   const [escalas, setEscalas] = useSupabaseState("sirh_escalas", []);
+  const [escExtras, setEscExtras] = useSupabaseState("sirh_extras", []);
   const [dashFilter, setDashFilter] = useState(null);
   const [feriasDetalhe, setFeriasDetalhe] = useState(null);
 
@@ -5739,6 +6027,7 @@ export default function App() {
           officers={officers} afastamentos={afastamentos} ferias={ferias}
           vantagens={vantagens} pelotoes={pelotoes} setPelotoes={setPelotoes}
           escalas={escalas} setEscalas={setEscalas} locations={locations}
+          escExtras={escExtras} setEscExtras={setEscExtras}
           loggedUser={loggedUser} perm={perm}/>}
         {page==="exportar" && (perm.admin||perm.verExportar) && <ModExportar officers={officers}/>}
         {page==="admin" && perm.admin && <ModAdmin users={users} setUsers={setUsers} officers={officers}/>}
