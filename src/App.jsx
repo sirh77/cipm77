@@ -4799,12 +4799,35 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>&#128081; Gestão de Pelotão</h2>
         {perm.admin&&<Btn onClick={()=>{setFormPel({nome:"",comandanteId:"",locais:[],comandanteNome:""});setModalNovo(true);}}>+ Novo pelotão</Btn>}
       </div>
-      {/* Status do banco */}
+      {/* Status do banco + Re-sync */}
       {dbStatus && dbStatus!=="ok" && (
         <div style={{background: dbStatus==="local"?"#fef3c7":"#fee2e2", border:"1px solid "+(dbStatus==="local"?"#fcd34d":"#fca5a5"), borderRadius:8, padding:"8px 14px", marginBottom:12, fontSize:12}}>
           {dbStatus==="local"
             ? "⚠️ Supabase não configurado — dados salvos apenas localmente neste navegador."
             : "❌ Erro ao acessar tabela 'pelotoes' no Supabase: "+dbStatus.replace("error:","")+" — Execute o SQL de criação de tabelas no painel do Supabase."}
+        </div>
+      )}
+      {dbStatus==="ok" && pelotoes.length>0 && perm.admin && (
+        <div style={{background:"#f0f4ff",border:"1px solid #c7d7f9",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:12,display:"flex",alignItems:"center",gap:10}}>
+          <span>🔄 {pelotoes.length} pelotão(ões) no dispositivo local. Se outros usuários não estão vendo, clique em</span>
+          <button onClick={async()=>{
+            let ok=0, err=0;
+            for (const pel of pelotoes) {
+              const {id, ...rest} = pel;
+              const {error} = await supabase.from("pelotoes").upsert({id:Number(id), data:rest});
+              if(error){err++;console.error("Erro upsert pelotao",id,error);}else{ok++;}
+            }
+            // Also sync escalas
+            const escLoc = JSON.parse(localStorage.getItem("sirh_escalas")||"[]");
+            for (const esc of escLoc) {
+              const {id, ...rest} = esc;
+              const {error} = await supabase.from("escalas").upsert({id:Number(id), data:rest});
+              if(error){console.error("Erro upsert escala",id,error);}
+            }
+            alert(ok+" pelotão(ões) sincronizado(s) com sucesso!"+(err>0?" "+err+" erro(s) — veja o console.":""));
+          }} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+            Sincronizar agora
+          </button>
         </div>
       )}
 
