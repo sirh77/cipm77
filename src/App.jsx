@@ -4131,7 +4131,7 @@ function calcHorasExtra(hi, hf) {
   return Math.round(mins*10/60)/10;
 }
 
-function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras, onGoExtra, ferias, afastamentos }) {
+function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras, onGoExtra, ferias, afastamentos, loggedUser }) {
   const [escalaSel, setEscalaSel] = useState(null);
   const [modalCriar, setModalCriar] = useState(false);
   const [modalGrupo, setModalGrupo] = useState(null);
@@ -4139,24 +4139,33 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   const [editLeg, setEditLeg]       = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
   const [formEscala, setFormEscala] = useState({nome:"",tipo:"24x96",horaInicio:"06:30",horaFim:"18:30",horaInicio2:"18:30",horaFim2:"06:30"});
+  const [modalCmd, setModalCmd]     = useState(false);
+  const [cmdDias, setCmdDias]       = useState([]);
+  const [cmdLeg, setCmdLeg]         = useState("C8");
+  const [editCmdCell, setEditCmdCell] = useState(null);
+  const [editCmdLeg, setEditCmdLeg]   = useState("");
   const setFE = (k,v) => setFormEscala(f=>({...f,[k]:v}));
 
   const diasNoMes = new Date(ano, mes, 0).getDate();
   const hoje = new Date();
   const isCurrentMonth = mes===hoje.getMonth()+1 && ano===hoje.getFullYear();
   const diaHoje = hoje.getDate();
+  const DS = ["Dom","Seg","Ter","Qua","Qui","Sex","Sab"];
+  const pDia = new Date(ano, mes-1, 1).getDay();
 
   const escalasDoPeriodo = escalas.filter(e => e.pelotaoId===pelotao.id && e.mes===mes && e.ano===ano);
   const escalaAtual = escalasDoPeriodo.find(e=>e.id===escalaSel) || escalasDoPeriodo[0] || null;
 
-  // Extras do período indexados por extra_id → cor
+  // Extras do período
   const EXTRA_CORES = ["#7c3aed","#0891b2","#059669","#d97706","#dc2626","#be185d"];
   const extrasDoMes = (escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
   const extraCorMap = {};
-  extrasDoMes.forEach((e,i)=>{ extraCorMap[e.id]=EXTRA_CORES[i%EXTRA_CORES.length]; });
+  extrasDoMes.forEach((e,i)=>{extraCorMap[e.id]=EXTRA_CORES[i%EXTRA_CORES.length];});
+
+  // Comandante do pelotão
+  const cmdOfficer = officers.find(o=>cleanMat(o.matricula)===pelotao.comandanteId||String(o.id)===pelotao.comandanteId);
 
   function calcExtrasParaDia(pid, dia) {
-    // Retorna array de {extra, diaDados, cor} para este policial/dia
     return extrasDoMes.map((ex,i)=>{
       const dd=(ex.dias||[]).find(d=>d.dia===dia&&(d.policiais||[]).includes(pid));
       if(!dd) return null;
@@ -4164,32 +4173,35 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
     }).filter(Boolean);
   }
 
-  // ── Sync / Helpers ─────────────────────────────────────────────────────────
-  function updateCell(eid, pid, dia, leg) {
-    setEscalas(es=>es.map(e=> e.id!==eid ? e : {
-      ...e, celulas:{...(e.celulas||{}),[pid+"_"+dia]:leg||undefined}
-    }));
-  }
-  // Retorna legenda de afastamento/férias para um policial em um dia específico
   function getLegAfastamento(pid, dia) {
     const ds = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
-    // Férias
-    const emFerias = (ferias||[]).some(pl =>
-      (pl.participantes||[]).some(p => {
-        if(p.policialId!==pid) return false;
-        const ini=p.dataInicio||pl.dataInicio; const fim=p.dataFim||pl.dataFim;
-        return ini&&fim&&ini<=ds&&fim>=ds;
-      })
-    );
+    const emFerias = (ferias||[]).some(pl=>(pl.participantes||[]).some(p=>{
+      if(p.policialId!==pid) return false;
+      const ini=p.dataInicio||pl.dataInicio; const fim=p.dataFim||pl.dataFim;
+      return ini&&fim&&ini<=ds&&fim>=ds;
+    }));
     if(emFerias) return "F";
-    // Afastamentos
-    const AFT_LEG = {"Junta Médica":"JMS","Atestado":"AT","Restrição Médica":"AT","Licença Prêmio":"LP","Licença Maternidade":"LM","Licença Paternidade":"P","Luto":"D","Núpcias":"D"};
-    const af=(afastamentos||[]).find(a=>
-      a.policialId===pid&&!a.concluido&&
-      (!a.dataInicio||a.dataInicio<=ds)&&(!a.dataFim||a.dataFim>=ds)
-    );
+    const AFT_LEG={"Junta Médica":"JMS","Atestado":"AT","Restrição Médica":"AT","Licença Prêmio":"LP","Licença Maternidade":"LM","Licença Paternidade":"P","Luto":"D","Núpcias":"D"};
+    const af=(afastamentos||[]).find(a=>a.policialId===pid&&!a.concluido&&(!a.dataInicio||a.dataInicio<=ds)&&(!a.dataFim||a.dataFim>=ds));
     if(af&&AFT_LEG[af.tipo]) return AFT_LEG[af.tipo];
     return null;
+  }
+
+  function updateCell(eid, pid, dia, leg) {
+    setEscalas(es=>es.map(e=>e.id!==eid?e:{...e,celulas:{...(e.celulas||{}),[pid+"_"+dia]:leg||undefined}}));
+  }
+  function updateCmdCell(eid, dia, leg) {
+    setEscalas(es=>es.map(e=>e.id!==eid?e:{...e,cmdCelulas:{...(e.cmdCelulas||{}),[dia]:leg||undefined}}));
+  }
+  function applyCmd(eid) {
+    if(!cmdDias.length||!cmdLeg) return;
+    setEscalas(es=>es.map(e=>{
+      if(e.id!==eid) return e;
+      const nc={...(e.cmdCelulas||{})};
+      cmdDias.forEach(d=>{nc[d]=cmdLeg;});
+      return {...e,cmdCelulas:nc};
+    }));
+    setModalCmd(false); setCmdDias([]);
   }
 
   function addMembro(eid, gId, pid) {
@@ -4210,12 +4222,8 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
           if(pos===s.noite) novasCelulas[pid+"_"+d]=legNoite;
         }
       }
-      // Sobrescrever dias com férias/afastamentos
-      for(let d=1;d<=diasNoMes;d++){
-        const leg=getLegAfastamento(pid,d);
-        if(leg) novasCelulas[pid+"_"+d]=leg;
-      }
-      return {...e, celulas:novasCelulas, grupos:e.grupos.map(g=>g.id!==gId?g:{...g,membros:[...new Set([...g.membros,pid])]})};
+      for(let d=1;d<=diasNoMes;d++){const leg=getLegAfastamento(pid,d);if(leg)novasCelulas[pid+"_"+d]=leg;}
+      return {...e,celulas:novasCelulas,grupos:e.grupos.map(g=>g.id!==gId?g:{...g,membros:[...new Set([...g.membros,pid])]})};
     }));
   }
   function removeMembro(eid, gId, pid) {
@@ -4235,7 +4243,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       horaInicio:formEscala.horaInicio,horaFim:formEscala.horaFim,
       horaInicio2:formEscala.horaInicio2,horaFim2:formEscala.horaFim2,
       titulo:"ESCALA ORDINÁRIA "+["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][mes-1]+"/"+ano,
-      grupos,celulas:{}
+      grupos, celulas:{}, cmdCelulas:{}
     };
     setEscalas(es=>[...es,nova]); setEscalaSel(nova.id); setModalCriar(false);
     setFormEscala({nome:"",tipo:"24x96",horaInicio:"06:30",horaFim:"18:30",horaInicio2:"18:30",horaFim2:"06:30"});
@@ -4244,27 +4252,104 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   function calcHorasPolicial(escala, pid) {
     let total=0,noturno=0;
     for(let d=1;d<=diasNoMes;d++){
-      const leg=(escala.celulas||{})[pid+"_"+d]; if(!leg) continue;
-      total+=HORAS_LEGENDA[leg]||0; noturno+=NOTURNO_LEGENDA[leg]||0;
+      const leg=(escala.celulas||{})[pid+"_"+d];if(!leg)continue;
+      total+=HORAS_LEGENDA[leg]||0;noturno+=NOTURNO_LEGENDA[leg]||0;
     }
     return{total,noturno};
   }
 
+  function imprimirEscala() {
+    if(!escalaAtual) return;
+    const emit=window.__loggedUser?`${window.__loggedUser.grau||""} ${window.__loggedUser.nome||""}, Matrícula ${cleanMat(window.__loggedUser.matricula||"")}`:("Sistema");
+    const dataHora=new Date().toLocaleDateString("pt-BR")+" às "+new Date().toLocaleTimeString("pt-BR");
+    const titulo=escalaAtual.titulo+(escalaAtual.nome?" — "+escalaAtual.nome:"");
+    const dias=Array.from({length:diasNoMes},(_,i)=>i+1);
+    const css=`<style>@page{size:A4 landscape;margin:12mm 10mm;}body{font-family:Arial,sans-serif;font-size:8px;margin:0;padding:0;}.cab{text-align:center;font-weight:bold;font-size:9px;line-height:1.7;text-transform:uppercase;margin-bottom:6px;}.tit{text-align:center;font-size:10px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;margin-bottom:8px;}.grp{background:#1e3a5f;color:#fff;padding:3px 8px;font-weight:bold;font-size:8px;margin:6px 0 2px;}table{width:100%;border-collapse:collapse;}th{background:#f0f4ff;padding:2px 1px;text-align:center;border:1px solid #ccc;font-size:7px;}th.nm{text-align:left;padding-left:4px;min-width:100px;}td{padding:2px 1px;text-align:center;border:1px solid #ddd;font-size:7px;white-space:nowrap;}td.nm{text-align:left;padding-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;}.rod{margin-top:8px;border-top:1px solid #ccc;padding-top:4px;font-size:7px;color:#555;font-style:italic;}.sab{background:#fee2e2;color:#991b1b;}.dom{background:#fee2e2;color:#991b1b;}.hj{background:#1e3a5f;color:#fff;}.f5{background:#dcfce7;}.c8,.c9,.r19,.r20{background:#dcfce7;}.jms,.at{background:#fee2e2;}.f{background:#dbeafe;}.cmd{background:#f0e6ff;font-weight:bold;}</style>`;
+    let html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>${css}</head><body>`;
+    html+=`<div class="cab">POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>`;
+    html+=`<div class="tit">${titulo}</div>`;
+    // Cabeçalho tipo/horário
+    html+=`<p style="font-size:8px;margin-bottom:6px;">${escalaAtual.tipo==="24x96"?"24x96":"12x24 12x72"} | ${escalaAtual.horaInicio}h às ${escalaAtual.horaFim}h${escalaAtual.horaInicio2?" | "+escalaAtual.horaInicio2+"h às "+escalaAtual.horaFim2+"h":""}</p>`;
+    // Linha comandante
+    if(cmdOfficer){
+      const cmdCels=escalaAtual.cmdCelulas||{};
+      html+=`<div class="grp" style="background:#5b21b6;">COMANDANTE</div><table><thead><tr><th class="nm">Nome</th><th>Função</th>`;
+      dias.forEach(d=>{const ds=DS[(pDia+d-1)%7];html+=`<th class="${ds==="Sab"?"sab":ds==="Dom"?"dom":""}">${ds.slice(0,1)}<br>${d}</th>`;});
+      html+=`<th>Ad.N</th><th>Tot.h</th><th>VD</th><th>HE</th></tr></thead><tbody><tr><td class="nm">${cmdOfficer.grau} ${cmdOfficer.nome.toUpperCase()}</td><td>${cmdOfficer.cargo||""}</td>`;
+      let tot=0,not=0;
+      dias.forEach(d=>{const leg=cmdCels[d]||"";const cls=leg==="F"?"f":leg==="JMS"||leg==="AT"?"at":leg?"c8":"";html+=`<td class="${cls}">${leg}</td>`;tot+=HORAS_LEGENDA[leg]||0;not+=NOTURNO_LEGENDA[leg]||0;});
+      html+=`<td>${not||""}</td><td>${tot||""}</td><td></td><td></td></tr></tbody></table>`;
+    }
+    // Grupos
+    escalaAtual.grupos.forEach(g=>{
+      const membros=[...g.membros].sort((a,b)=>{const oa=officers.find(x=>x.id===a),ob=officers.find(x=>x.id===b);if(!oa||!ob)return 0;return rankSort(oa,ob);});
+      if(!membros.length) return;
+      const [,fg]=GRUPO_CORES[g.id]||["#1e3a5f","#fff"];
+      html+=`<div class="grp">GRUPO ${g.id}</div><table><thead><tr><th class="nm">Nome</th><th>Função</th>`;
+      dias.forEach(d=>{const ds=DS[(pDia+d-1)%7];html+=`<th class="${ds==="Sab"?"sab":ds==="Dom"?"dom":""}">${ds.slice(0,1)}<br>${d}</th>`;});
+      html+=`<th>Ad.N</th><th>Tot.h</th><th>VD</th><th>HE</th></tr></thead><tbody>`;
+      membros.forEach(pid=>{
+        const o=officers.find(x=>x.id===pid);if(!o)return;
+        const{total,noturno}=calcHorasPolicial(escalaAtual,pid);
+        const extrasAtivas=(escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+        const vd=extrasAtivas.filter(e=>e.tipo==="VD").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
+        const he=extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
+        html+=`<tr><td class="nm">${o.grau} ${o.nome.toUpperCase()} ${cleanMat(o.matricula)}</td><td>${o.cargo||""}</td>`;
+        dias.forEach(d=>{
+          const leg=(escalaAtual.celulas||{})[pid+"_"+d]||"";
+          const exDia=extrasDoMes.find(ex=>(ex.dias||[]).some(dd=>dd.dia===d&&(dd.policiais||[]).includes(pid)));
+          const cls=leg==="F"?"f":leg==="JMS"||leg==="AT"?"at":leg?"c8":"";
+          html+=`<td class="${cls}">${leg}${exDia?`<sup style="color:${extraCorMap[exDia.id]||"#7c3aed"};font-weight:bold;">${exDia.sigla}</sup>`:""}`;
+          html+=`</td>`;
+        });
+        html+=`<td>${noturno||""}</td><td>${total||""}</td><td>${vd||""}</td><td>${he||""}</td></tr>`;
+      });
+      html+=`</tbody></table>`;
+    });
+    html+=`<div class="rod">Relatório emitido por ${emit} em ${dataHora} — SiRH77</div></body></html>`;
+    const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const w=window.open(url,"_blank");
+    if(w)w.addEventListener("load",()=>{setTimeout(()=>{w.print();URL.revokeObjectURL(url);},400);});
+  }
+
   const emServicoPorEscala = escalasDoPeriodo.map(esc=>{
-    if(!isCurrentMonth) return{escala:esc,servicos:[]};
-    const servicos=esc.grupos.flatMap(g=>(g.membros||[]).filter(pid=>{
-      const leg=(esc.celulas||{})[pid+"_"+diaHoje];
-      return leg&&!["F","JMS","LP","AT","D","P","LM","CR"].includes(leg);
-    }).map(pid=>({pid,grupo:g.id,leg:(esc.celulas||{})[pid+"_"+diaHoje]})));
+    if(!isCurrentMonth)return{escala:esc,servicos:[]};
+    const servicos=esc.grupos.flatMap(g=>(g.membros||[]).filter(pid=>{const leg=(esc.celulas||{})[pid+"_"+diaHoje];return leg&&!["F","JMS","LP","AT","D","P","LM","CR"].includes(leg);}).map(pid=>({pid,grupo:g.id,leg:(esc.celulas||{})[pid+"_"+diaHoje]})));
     return{escala:esc,servicos};
   }).filter(x=>x.servicos.length>0);
 
   const thS={padding:"3px 2px",textAlign:"center",fontSize:10,fontWeight:600,borderBottom:"2px solid #1e3a5f",minWidth:28,background:"#f8faff",whiteSpace:"nowrap"};
   const tdS={padding:"2px",textAlign:"center",fontSize:11,borderBottom:"1px solid #f0f0f0"};
-  const DS=["Dom","Seg","Ter","Qua","Qui","Sex","Sab"];
+
+  // Render de célula unificado
+  function renderCell(leg, extDia, isH, isW, onClickOrd, onClickExtra) {
+    const bgOrd = leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#eff6ff":isW?"#fff5f5":"#fff";
+    if(!extDia||extDia.length===0){
+      return <td style={{...tdS,background:bgOrd,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb"}} onClick={onClickOrd}>{leg||""}</td>;
+    }
+    // Tem extra: mostrar ordinário + badge de extra embaixo
+    const ex1=extDia[0]; const ex2=extDia[1]||null;
+    return (
+      <td style={{...tdS,background:bgOrd,cursor:"pointer",padding:"1px",verticalAlign:"top"}} onClick={onClickOrd}>
+        <div style={{fontWeight:leg?700:400,color:leg?"#1e3a5f":"#9ca3af",fontSize:10,textAlign:"center",lineHeight:"12px"}}>{leg||""}</div>
+        <div style={{display:"flex",gap:1,marginTop:1}}>
+          <div onClick={e=>{e.stopPropagation();onClickExtra&&onClickExtra(ex1.extra.id);}}
+            style={{flex:1,background:ex1.cor,borderRadius:2,textAlign:"center",fontSize:8,fontWeight:700,color:"#fff",padding:"1px 0",lineHeight:"11px",cursor:"pointer"}}>
+            {ex1.extra.sigla}
+          </div>
+          {ex2&&<div onClick={e=>{e.stopPropagation();onClickExtra&&onClickExtra(ex2.extra.id);}}
+            style={{flex:1,background:ex2.cor,borderRadius:2,textAlign:"center",fontSize:8,fontWeight:700,color:"#fff",padding:"1px 0",lineHeight:"11px",cursor:"pointer"}}>
+            {ex2.extra.sigla}
+          </div>}
+        </div>
+      </td>
+    );
+  }
 
   return (
     <div>
+      {/* Modal criar */}
       {modalCriar&&(
         <Modal title="Nova escala" onClose={()=>setModalCriar(false)}>
           <Input label="Nome (ex: CENTRO, CANDEIAS)" value={formEscala.nome} onChange={e=>setFE("nome",e.target.value)} placeholder="CENTRO"/>
@@ -4275,10 +4360,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             <Input label="Início 1º turno" type="time" value={formEscala.horaInicio} onChange={e=>setFE("horaInicio",e.target.value)}/>
             <Input label="Fim 1º turno" type="time" value={formEscala.horaFim} onChange={e=>setFE("horaFim",e.target.value)}/>
-            {formEscala.tipo==="12x24x72"&&<>
-              <Input label="Início 2º turno" type="time" value={formEscala.horaInicio2} onChange={e=>setFE("horaInicio2",e.target.value)}/>
-              <Input label="Fim 2º turno" type="time" value={formEscala.horaFim2} onChange={e=>setFE("horaFim2",e.target.value)}/>
-            </>}
+            {formEscala.tipo==="12x24x72"&&<><Input label="Início 2º turno" type="time" value={formEscala.horaInicio2} onChange={e=>setFE("horaInicio2",e.target.value)}/><Input label="Fim 2º turno" type="time" value={formEscala.horaFim2} onChange={e=>setFE("horaFim2",e.target.value)}/></>}
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
             <Btn variant="secondary" onClick={()=>setModalCriar(false)}>Cancelar</Btn>
@@ -4287,6 +4369,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         </Modal>
       )}
 
+      {/* Modal grupo */}
       {modalGrupo&&escalaAtual&&(()=>{
         const{grupoId:gId,escalaId:eId}=modalGrupo;
         const g=escalaAtual.grupos.find(x=>x.id===gId)||{membros:[]};
@@ -4306,6 +4389,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         );
       })()}
 
+      {/* Modal editar célula */}
       {editCell&&escalaAtual&&(()=>{
         const o=officers.find(x=>x.id===editCell.pid);
         return(
@@ -4327,9 +4411,76 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         );
       })()}
 
+      {/* Modal editar célula do comandante */}
+      {editCmdCell&&escalaAtual&&(
+        <Modal title={"Dia "+editCmdCell.dia+" — Comandante"} onClose={()=>setEditCmdCell(null)}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
+            {Object.entries(LEGENDAS_ESCALA).map(([leg,desc])=>(
+              <button key={leg} onClick={()=>setEditCmdLeg(editCmdLeg===leg?"":leg)}
+                style={{padding:"4px 8px",borderRadius:5,border:"2px solid "+(editCmdLeg===leg?"#5b21b6":"#e5e7eb"),background:editCmdLeg===leg?"#5b21b6":"#fff",color:editCmdLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer"}}>
+                <strong>{leg}</strong> <span style={{fontSize:9,opacity:0.7}}>{desc}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <Btn variant="secondary" onClick={()=>{updateCmdCell(escalaAtual.id,editCmdCell.dia,"");setEditCmdCell(null);}}>🗑 Limpar</Btn>
+            <Btn variant="secondary" onClick={()=>setEditCmdCell(null)}>Cancelar</Btn>
+            <Btn onClick={()=>{updateCmdCell(escalaAtual.id,editCmdCell.dia,editCmdLeg);setEditCmdCell(null);}}>✓ Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal escala do comandante (lote) */}
+      {modalCmd&&escalaAtual&&(
+        <Modal title="Escala do Comandante — Seleção em lote" onClose={()=>{setModalCmd(false);setCmdDias([]);}} wide>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Selecionar dias por padrão</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+              {[["Todos",Array.from({length:diasNoMes},(_,i)=>i+1)],
+                ["Dias úteis",Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>{ const dw=(pDia+d-1)%7; return dw>=1&&dw<=5; })],
+                ["Fins de semana",Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>{ const dw=(pDia+d-1)%7; return dw===0||dw===6; })],
+                ...["Dom","Seg","Ter","Qua","Qui","Sex","Sab"].map((n,wi)=>[n, Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>(pDia+d-1)%7===wi)])
+              ].map(([label,dias])=>(
+                <button key={label} onClick={()=>setCmdDias(dias)}
+                  style={{padding:"4px 10px",border:"1px solid #e5e7eb",borderRadius:6,background:"#f3f4f6",fontSize:11,cursor:"pointer"}}>
+                  {label}
+                </button>
+              ))}
+              <button onClick={()=>setCmdDias([])} style={{padding:"4px 10px",border:"1px solid #e5e7eb",borderRadius:6,background:"#fee2e2",color:"#dc2626",fontSize:11,cursor:"pointer"}}>Limpar</button>
+            </div>
+            <div style={{fontSize:11,fontWeight:600,marginBottom:4}}>Ou selecione individualmente:</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:3,maxHeight:120,overflowY:"auto"}}>
+              {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=>{
+                const dw=(pDia+d-1)%7; const isW=dw===0||dw===6; const sel=cmdDias.includes(d);
+                return <button key={d} onClick={()=>setCmdDias(prev=>prev.includes(d)?prev.filter(x=>x!==d):[...prev,d])}
+                  style={{width:28,height:28,border:"2px solid "+(sel?"#5b21b6":"#e5e7eb"),borderRadius:5,background:sel?"#5b21b6":isW?"#fff5f5":"#fff",color:sel?"#fff":isW?"#991b1b":"#374151",fontSize:10,fontWeight:sel?700:400,cursor:"pointer"}}>
+                  {d}
+                </button>;
+              })}
+            </div>
+            <div style={{marginTop:6,fontSize:11,color:"#6b7280"}}>{cmdDias.length} dia(s) selecionado(s)</div>
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Legenda de serviço</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              {["C8","C9","R19","R20","F5","F","JMS","LP","AT","D","CR"].map(leg=>(
+                <button key={leg} onClick={()=>setCmdLeg(leg)}
+                  style={{padding:"5px 10px",borderRadius:5,border:"2px solid "+(cmdLeg===leg?"#5b21b6":"#e5e7eb"),background:cmdLeg===leg?"#5b21b6":"#fff",color:cmdLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:cmdLeg===leg?700:400}}>
+                  {leg} <span style={{fontSize:9,opacity:0.7}}>{LEGENDAS_ESCALA[leg]||""}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <Btn variant="secondary" onClick={()=>{setModalCmd(false);setCmdDias([]);}}>Cancelar</Btn>
+            <Btn onClick={()=>applyCmd(escalaAtual.id)} disabled={!cmdDias.length}>✓ Aplicar ({cmdDias.length} dias)</Btn>
+          </div>
+        </Modal>
+      )}
+
       {confirmDel&&<Confirm msg={"Excluir escala "+confirmDel.nome+"?"} onYes={()=>{setEscalas(es=>es.filter(e=>e.id!==confirmDel.id));setConfirmDel(null);setEscalaSel(null);}} onNo={()=>setConfirmDel(null)}/>}
 
-      {/* Abas de escalas */}
+      {/* Abas + botões */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
           {escalasDoPeriodo.map(e=>(
@@ -4342,6 +4493,12 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
             + Nova escala
           </button>
         </div>
+        {escalaAtual&&(
+          <div style={{display:"flex",gap:5,marginLeft:6}}>
+            <button onClick={imprimirEscala} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir</button>
+            <button onClick={()=>setConfirmDel(escalaAtual)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",color:"#dc2626",cursor:"pointer",fontSize:11}}>🗑</button>
+          </div>
+        )}
       </div>
 
       {escalaAtual&&(
@@ -4357,7 +4514,6 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
               return <button key={g} onClick={()=>setModalGrupo({grupoId:g,escalaId:escalaAtual.id})}
                 style={{background:bg,color:fg,border:"none",borderRadius:5,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>{g} ({c})</button>;
             })}
-            <button onClick={()=>setConfirmDel(escalaAtual)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",color:"#dc2626",cursor:"pointer",fontSize:11}}>🗑</button>
           </div>
         </div>
       )}
@@ -4369,63 +4525,41 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         const manuais=(pelotao.manualMes||{})[manualKey]||[];
         const membrosBase=officers.filter(o=>(pelotao.locais||[]).includes(o.localTrabalho||"")||manuais.includes(o.id));
         const faltando=membrosBase.filter(o=>!escaladosIds.has(o.id)).sort(rankSort);
-        if(faltando.length===0) return null;
+        if(!faltando.length) return null;
         return (
           <details style={{background:"#fef9c3",border:"1px solid #fde047",borderRadius:8,padding:"8px 14px",marginBottom:12}}>
-            <summary style={{fontSize:12,fontWeight:600,color:"#854d0e",cursor:"pointer",userSelect:"none",listStyle:"none",display:"flex",alignItems:"center",gap:6}}>
-              <span>▶</span> ⚠️ Falta escalar {faltando.length} policial(is) do pelotão
-            </summary>
+            <summary style={{fontSize:12,fontWeight:600,color:"#854d0e",cursor:"pointer"}}>⚠️ Falta escalar {faltando.length} policial(is) do pelotão ▶</summary>
             <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:6}}>
-              {faltando.map(o=>(
-                <span key={o.id} style={{background:"#fff",border:"1px solid #fde047",borderRadius:5,padding:"3px 8px",fontSize:11,color:"#374151"}}>
-                  {o.grau} {o.nome}
-                </span>
-              ))}
+              {faltando.map(o=><span key={o.id} style={{background:"#fff",border:"1px solid #fde047",borderRadius:5,padding:"3px 8px",fontSize:11}}>{o.grau} {o.nome}</span>)}
             </div>
           </details>
         );
       })()}
 
-      {/* Em serviço hoje — ordinário + extras */}
+      {/* Em serviço hoje */}
       {isCurrentMonth&&(()=>{
         const extrasHoje=extrasDoMes.filter(ex=>(ex.dias||[]).some(d=>d.dia===diaHoje&&(d.policiais||[]).length>0));
-        if(emServicoPorEscala.length===0&&extrasHoje.length===0) return null;
+        if(!emServicoPorEscala.length&&!extrasHoje.length) return null;
         return (
           <div style={{marginBottom:12}}>
             {emServicoPorEscala.map(({escala:esc,servicos})=>(
               <Card key={esc.id} style={{marginBottom:6,background:"#f0f4ff",border:"1px solid #c7d7f9"}}>
                 <div style={{fontSize:12,fontWeight:700,color:"#1e3a5f",marginBottom:5}}>{esc.nome} — Em serviço hoje (dia {diaHoje})</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {servicos.map(({pid,grupo,leg})=>{
-                    const o=officers.find(x=>x.id===pid); if(!o) return null;
-                    const[bg,fg]=GRUPO_CORES[grupo]||["#1e3a5f","#fff"];
-                    return <span key={pid} style={{background:bg,color:fg,borderRadius:999,padding:"2px 9px",fontSize:11}}><strong>{grupo}</strong> {o.nomeGuerra||o.nome.split(" ")[0]} · {leg}</span>;
-                  })}
+                  {servicos.map(({pid,grupo,leg})=>{const o=officers.find(x=>x.id===pid);if(!o)return null;const[bg,fg]=GRUPO_CORES[grupo]||["#1e3a5f","#fff"];return <span key={pid} style={{background:bg,color:fg,borderRadius:999,padding:"2px 9px",fontSize:11}}><strong>{grupo}</strong> {o.nomeGuerra||o.nome.split(" ")[0]} · {leg}</span>;})}
                 </div>
               </Card>
             ))}
             {extrasHoje.map((ex,ei)=>{
-              const diasHoje=(ex.dias||[]).filter(d=>d.dia===diaHoje);
+              const diasHj=(ex.dias||[]).filter(d=>d.dia===diaHoje);
               const cor=EXTRA_CORES[ei%EXTRA_CORES.length];
-              return (
-                <Card key={ex.id} style={{marginBottom:6,background:"#faf5ff",border:"1px solid #e9d5ff"}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",marginBottom:5}}>
-                    <span style={{background:cor,color:"#fff",borderRadius:4,padding:"1px 6px",fontSize:10,marginRight:6}}>{ex.sigla}</span>
-                    {ex.nome} — Escala extra hoje (dia {diaHoje})
-                  </div>
-                  {diasHoje.map(d=>(
-                    <div key={d.id} style={{marginBottom:4}}>
-                      <div style={{fontSize:11,color:"#6b7280",marginBottom:3}}>🕐 {d.horaInicio}h às {d.horaFim}h ({calcHorasExtra(d.horaInicio,d.horaFim)}h)</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                        {(d.policiais||[]).map(pid=>{
-                          const o=officers.find(x=>x.id===pid); if(!o) return null;
-                          return <span key={pid} style={{background:cor,color:"#fff",borderRadius:999,padding:"2px 9px",fontSize:11}}>{o.grau} {o.nomeGuerra||o.nome.split(" ")[0]}</span>;
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </Card>
-              );
+              return <Card key={ex.id} style={{marginBottom:6,background:"#faf5ff",border:"1px solid #e9d5ff"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",marginBottom:5}}><span style={{background:cor,color:"#fff",borderRadius:4,padding:"1px 6px",fontSize:10,marginRight:6}}>{ex.sigla}</span>{ex.nome} — Extra hoje (dia {diaHoje})</div>
+                {diasHj.map(d=><div key={d.id} style={{marginBottom:4}}>
+                  <div style={{fontSize:11,color:"#6b7280",marginBottom:3}}>🕐 {d.horaInicio}h às {d.horaFim}h ({calcHorasExtra(d.horaInicio,d.horaFim)}h)</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{(d.policiais||[]).map(pid=>{const o=officers.find(x=>x.id===pid);return o?<span key={pid} style={{background:cor,color:"#fff",borderRadius:999,padding:"2px 9px",fontSize:11}}>{o.grau} {o.nomeGuerra||o.nome.split(" ")[0]}</span>:null;})}</div>
+                </div>)}
+              </Card>;
             })}
           </div>
         );
@@ -4435,28 +4569,65 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       {extrasDoMes.length>0&&(
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8,padding:"6px 10px",background:"#faf5ff",border:"1px solid #e9d5ff",borderRadius:7}}>
           <span style={{fontSize:10,color:"#6b7280",fontWeight:600,marginRight:4}}>Extras:</span>
-          {extrasDoMes.map((ex,i)=>(
-            <button key={ex.id} onClick={()=>onGoExtra&&onGoExtra(ex.id)}
-              style={{background:EXTRA_CORES[i%EXTRA_CORES.length],color:"#fff",border:"none",borderRadius:5,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-              {ex.sigla} {ex.nome} ({ex.tipo})
-            </button>
-          ))}
+          {extrasDoMes.map((ex,i)=><button key={ex.id} onClick={()=>onGoExtra&&onGoExtra(ex.id)} style={{background:EXTRA_CORES[i%EXTRA_CORES.length],color:"#fff",border:"none",borderRadius:5,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>{ex.sigla} {ex.nome} ({ex.tipo})</button>)}
         </div>
       )}
 
       {/* Tabela */}
       {escalaAtual&&(()=>{
-        const pDia=new Date(ano,mes-1,1).getDay();
         const dias=Array.from({length:diasNoMes},(_,i)=>i+1);
         return (
           <div>
+            {/* Linha do Comandante */}
+            {cmdOfficer&&(
+              <div style={{marginBottom:14}}>
+                <div style={{background:"#5b21b6",color:"#fff",padding:"4px 12px",fontWeight:700,fontSize:12,borderRadius:"6px 6px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>COMANDANTE</span>
+                  <button onClick={()=>{setCmdDias([]);setModalCmd(true);}} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:5,padding:"2px 10px",fontSize:11,cursor:"pointer"}}>📅 Escalar em lote</button>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{borderCollapse:"collapse",fontSize:10,width:"100%",tableLayout:"fixed"}}>
+                    <thead>
+                      <tr>
+                        <th style={{...thS,width:180,textAlign:"left",padding:"4px 6px",background:"#ede9fe"}}>Nome</th>
+                        <th style={{...thS,width:85,textAlign:"left",padding:"4px 6px",background:"#ede9fe"}}>Função</th>
+                        {dias.map(d=>{const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;return<th key={d} style={{...thS,width:26,background:isH?"#5b21b6":isW?"#fee2e2":"#ede9fe",color:isH?"#fff":isW?"#991b1b":"#374151"}}><div style={{fontSize:8}}>{ds}</div><div>{d}</div></th>;})}
+                        <th style={{...thS,width:36,background:"#374151",color:"#fff",fontSize:9}}>Ad.Not</th>
+                        <th style={{...thS,width:44,background:"#5b21b6",color:"#fff",fontSize:9}}>Total h</th>
+                        <th style={{...thS,width:28,background:"#d97706",color:"#fff",fontSize:9}}>VD</th>
+                        <th style={{...thS,width:28,background:"#059669",color:"#fff",fontSize:9}}>HE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",background:"#faf5ff"}}>{cmdOfficer.grau} {cmdOfficer.nome.toUpperCase()} {cleanMat(cmdOfficer.matricula)}</td>
+                        <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontSize:9,color:"#6b7280",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",background:"#faf5ff"}}>{cmdOfficer.cargo||""}</td>
+                        {dias.map(d=>{
+                          const leg=(escalaAtual.cmdCelulas||{})[d];
+                          const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;
+                          const bg=leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#ede9fe":isW?"#fff5f5":"#faf5ff";
+                          return <td key={d} style={{...tdS,background:bg,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#5b21b6":"#d8b4fe"}}
+                            onClick={()=>{setEditCmdCell({dia:d});setEditCmdLeg(leg||"");}}>{leg||""}</td>;
+                        })}
+                        {(()=>{let tot=0,not=0;dias.forEach(d=>{const leg=(escalaAtual.cmdCelulas||{})[d];if(leg){tot+=HORAS_LEGENDA[leg]||0;not+=NOTURNO_LEGENDA[leg]||0;}});
+                          const extrasAtivas=(escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+                          const pid=cmdOfficer.id;
+                          const vd=extrasAtivas.filter(e=>e.tipo==="VD").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
+                          const he=extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
+                          return <><td style={{...tdS,fontWeight:700,background:"#f0f4ff"}}>{not||""}</td><td style={{...tdS,fontWeight:700,color:"#5b21b6",background:"#ede9fe"}}>{tot||""}</td><td style={{...tdS,fontWeight:700,background:"#fef3c7",color:"#92400e"}}>{vd||""}</td><td style={{...tdS,fontWeight:700,background:"#dcfce7",color:"#15803d"}}>{he||""}</td></>;
+                        })()}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Grupos */}
             {escalaAtual.grupos.map(g=>{
-              const membros=g.membros||[]; if(!membros.length) return null;
+              const membros=g.membros||[];if(!membros.length) return null;
               const[bgG]=GRUPO_CORES[g.id]||["#1e3a5f"];
-              const membrosOrdenados=[...membros].sort((a,b)=>{
-                const oa=officers.find(x=>x.id===a),ob=officers.find(x=>x.id===b);
-                if(!oa||!ob) return 0; return rankSort(oa,ob);
-              });
+              const membrosOrdenados=[...membros].sort((a,b)=>{const oa=officers.find(x=>x.id===a),ob=officers.find(x=>x.id===b);if(!oa||!ob)return 0;return rankSort(oa,ob);});
               return (
                 <div key={g.id} style={{marginBottom:18}}>
                   <div style={{background:bgG,color:"#fff",padding:"4px 12px",fontWeight:700,fontSize:12,borderRadius:"6px 6px 0 0"}}>GRUPO {g.id}</div>
@@ -4466,14 +4637,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                         <tr>
                           <th style={{...thS,width:180,textAlign:"left",padding:"4px 6px"}}>Nome</th>
                           <th style={{...thS,width:85,textAlign:"left",padding:"4px 6px"}}>Função</th>
-                          {dias.map(d=>{
-                            const ds=DS[(pDia+d-1)%7];
-                            const isW=ds==="Sab"||ds==="Dom";
-                            const isH=isCurrentMonth&&d===diaHoje;
-                            return <th key={d} style={{...thS,width:26,background:isH?"#1e3a5f":isW?"#fee2e2":"#f8faff",color:isH?"#fff":isW?"#991b1b":"#374151"}}>
-                              <div style={{fontSize:8}}>{ds}</div><div>{d}</div>
-                            </th>;
-                          })}
+                          {dias.map(d=>{const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;return<th key={d} style={{...thS,width:26,background:isH?"#1e3a5f":isW?"#fee2e2":"#f8faff",color:isH?"#fff":isW?"#991b1b":"#374151"}}><div style={{fontSize:8}}>{ds}</div><div>{d}</div></th>;})}
                           <th style={{...thS,width:36,background:"#374151",color:"#fff",fontSize:9}}>Ad.Not</th>
                           <th style={{...thS,width:44,background:"#1e3a5f",color:"#fff",fontSize:9}}>Total h</th>
                           <th style={{...thS,width:28,background:"#d97706",color:"#fff",fontSize:9}}>VD</th>
@@ -4482,67 +4646,22 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                       </thead>
                       <tbody>
                         {membrosOrdenados.map(pid=>{
-                          const o=officers.find(x=>x.id===pid); if(!o) return null;
+                          const o=officers.find(x=>x.id===pid);if(!o)return null;
                           const{total,noturno}=calcHorasPolicial(escalaAtual,pid);
                           const extrasAtivas=(escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
                           const horasVD=extrasAtivas.filter(e=>e.tipo==="VD").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
                           const horasHE=extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
                           return (
                             <tr key={pid}>
-                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                {o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}
-                              </td>
+                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}</td>
                               <td style={{...tdS,textAlign:"left",padding:"3px 6px",color:"#6b7280",fontSize:9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.cargo||""}</td>
                               {dias.map(d=>{
                                 const leg=(escalaAtual.celulas||{})[pid+"_"+d];
                                 const extDia=calcExtrasParaDia(pid,d);
-                                const ds=DS[(pDia+d-1)%7];
-                                const isW=ds==="Sab"||ds==="Dom";
-                                const isH=isCurrentMonth&&d===diaHoje;
-                                // Cor base da célula (serviço ordinário)
-                                const bgOrd=leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#eff6ff":isW?"#fff5f5":"#fff";
-
-                                if(extDia.length===0){
-                                  return (
-                                    <td key={d} style={{...tdS,background:bgOrd,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb"}}
-                                      onClick={()=>{setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg(leg||"");}}>
-                                      {leg||""}
-                                    </td>
-                                  );
-                                }
-
-                                // Tem extras neste dia — mostrar visual especial
-                                const MAX_H=12;
-                                if(extDia.length===1){
-                                  const{extra,diaDados,cor}=extDia[0];
-                                  const h=calcHorasExtra(diaDados.horaInicio,diaDados.horaFim);
-                                  const pct=Math.min(100,Math.round(h/MAX_H*100));
-                                  // Se tem serviço ordinário: fundo dividido (ord em cima, extra em baixo)
-                                  const bgFinal=leg
-                                    ? `linear-gradient(to bottom, ${bgOrd} 50%, ${cor} 50%)`
-                                    : `linear-gradient(to bottom, transparent ${100-pct}%, ${cor} ${100-pct}%)`;
-                                  return (
-                                    <td key={d} style={{...tdS,background:bgFinal,cursor:"pointer",position:"relative",padding:0}}
-                                      onClick={()=>onGoExtra&&onGoExtra(extra.id)}>
-                                      <div style={{fontSize:8,fontWeight:700,color:"#fff",textShadow:"0 0 2px rgba(0,0,0,0.8)",lineHeight:"20px",textAlign:"center"}}>
-                                        {leg&&<div style={{color:"#1e3a5f",textShadow:"none",fontSize:8}}>{leg}</div>}
-                                        <div style={{color:"#fff",fontSize:8}}>{extra.sigla}</div>
-                                      </div>
-                                    </td>
-                                  );
-                                }
-                                // 2+ extras: dividir célula verticalmente
-                                return (
-                                  <td key={d} style={{...tdS,cursor:"pointer",padding:0}}>
-                                    <div style={{display:"flex",height:"100%",minHeight:18}}>
-                                      {extDia.slice(0,2).map(({extra,cor},ei)=>(
-                                        <div key={ei} onClick={()=>onGoExtra&&onGoExtra(extra.id)}
-                                          style={{flex:1,background:cor,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                          <span style={{fontSize:7,fontWeight:700,color:"#fff",textShadow:"0 0 2px rgba(0,0,0,0.5)"}}>{extra.sigla}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </td>
+                                const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;
+                                return renderCell(leg,extDia,isH,isW,
+                                  ()=>{setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg(leg||"");},
+                                  (eid)=>onGoExtra&&onGoExtra(eid)
                                 );
                               })}
                               <td style={{...tdS,fontWeight:700,background:"#f0f4ff"}}>{noturno||""}</td>
@@ -4575,6 +4694,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
     </div>
   );
 }
+
 
 function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, ano, extSel, setExtSel }) {
   const [modalNova, setModalNova]     = useState(false);
