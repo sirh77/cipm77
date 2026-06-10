@@ -29,4 +29,5 @@ export const KEY_MAP = {
   'sirh_pelotoes':        { table: 'pelotoes' },
   'sirh_escalas':         { table: 'escalas' },
   'sirh_extras':          { table: 'esc_extras' },
+  'sirh_legendas_custom': { table: 'config', type: 'config', key: 'legendas_custom' },
 }

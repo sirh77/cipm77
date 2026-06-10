@@ -4086,16 +4086,22 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
 
 // Módulos do sistema e seus labels
 // ─── MÓDULO GESTÃO DE PELOTÃO ─────────────────────────────────────────────
-const LEGENDAS_ESCALA = {
-  A1:"08h-12h/14h-18h", A11:"22h-06h", A4:"08h-12h/13h-17h",
-  B1:"07h-13h", B2:"13h-19h", C1:"07h-19h", C11:"13h-01h",
-  C2:"19h-07h", C8:"06h-18h", C9:"18h-06h",
-  CR:"Em curso", F:"Férias", F5:"06h-06h", G1:"06h-21h",
-  H5:"09h-01h", JMS:"Junta médica", LP:"Licença Prêmio",
-  M3:"07h30-19h30", R19:"06h30-18h30", R20:"18h30-06h30",
-  R21:"06h-18h", AT:"Atestado", D:"Dispensa",
-  P:"Lic.Paternidade", LM:"Lic.Maternidade",
+// Legendas base do sistema (imutáveis)
+const LEGENDAS_BASE = {
+  A1:"08h às 12h / 14h às 18h", A11:"22h às 06h", A4:"08h às 12h / 13h às 17h",
+  B1:"07h às 13h", B2:"13h às 19h", C1:"07h às 19h", C11:"13h às 01h",
+  C2:"19h às 07h", C8:"06h às 18h", C9:"18h às 06h",
+  CR:"Em curso", F:"Férias", F5:"06h às 06h (24h)", G1:"06h às 21h",
+  H5:"09h às 01h", JMS:"Junta Médica de Saúde", LP:"Licença Prêmio",
+  M3:"07h30 às 19h30", R19:"06h30 às 18h30", R20:"18h30 às 06h30",
+  R21:"06h às 18h", AT:"Atestado", D:"Dispensa",
+  P:"Licença Paternidade", LM:"Licença Maternidade",
 };
+// Legendas customizadas (carregadas do Supabase, mescladas com base)
+let LEGENDAS_CUSTOM = {};
+// Getter que mescla base + custom
+function getLegendas() { return {...LEGENDAS_BASE, ...LEGENDAS_CUSTOM}; }
+const LEGENDAS_ESCALA = new Proxy({}, { get: (_,k)=>(LEGENDAS_BASE[k]||LEGENDAS_CUSTOM[k]||undefined) });
 const HORAS_LEGENDA = {
   A1:8, A11:8, A4:8, B1:6, B2:6, C1:12, C11:12, C2:12, C8:12, C9:12,
   F5:24, G1:15, H5:16, M3:12, R19:12, R20:12, R21:12,
@@ -4131,7 +4137,7 @@ function calcHorasExtra(hi, hf) {
   return Math.round(mins*10/60)/10;
 }
 
-function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras, onGoExtra, ferias, afastamentos, loggedUser }) {
+function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras, onGoExtra, ferias, afastamentos, loggedUser, legendasCustom, setLegendasCustom }) {
   const [escalaSel, setEscalaSel] = useState(null);
   const [modalCriar, setModalCriar] = useState(false);
   const [modalGrupo, setModalGrupo] = useState(null);
@@ -4144,7 +4150,12 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   const [cmdLeg, setCmdLeg]         = useState("C8");
   const [editCmdCell, setEditCmdCell] = useState(null);
   const [editCmdLeg, setEditCmdLeg]   = useState("");
+  const [modalLeg, setModalLeg]       = useState(false);
+  const [formLeg, setFormLeg]         = useState({sigla:"",desc:""});
   const setFE = (k,v) => setFormEscala(f=>({...f,[k]:v}));
+
+  // Legendas mescladas (base + custom)
+  const todasLegendas = {...LEGENDAS_BASE, ...(legendasCustom||{})};
 
   const diasNoMes = new Date(ano, mes, 0).getDate();
   const hoje = new Date();
@@ -4395,7 +4406,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         return(
           <Modal title={"Dia "+editCell.dia+" — "+(o?o.grau+" "+o.nome:"")} onClose={()=>setEditCell(null)}>
             <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
-              {Object.entries(LEGENDAS_ESCALA).map(([leg,desc])=>(
+              {Object.entries(todasLegendas).map(([leg,desc])=>(
                 <button key={leg} onClick={()=>setEditLeg(editLeg===leg?"":leg)}
                   style={{padding:"4px 8px",borderRadius:5,border:"2px solid "+(editLeg===leg?"#1e3a5f":"#e5e7eb"),background:editLeg===leg?"#1e3a5f":"#fff",color:editLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer"}}>
                   <strong>{leg}</strong> <span style={{fontSize:9,opacity:0.7}}>{desc}</span>
@@ -4415,7 +4426,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       {editCmdCell&&escalaAtual&&(
         <Modal title={"Dia "+editCmdCell.dia+" — Comandante"} onClose={()=>setEditCmdCell(null)}>
           <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
-            {Object.entries(LEGENDAS_ESCALA).map(([leg,desc])=>(
+            {Object.entries(todasLegendas).map(([leg,desc])=>(
               <button key={leg} onClick={()=>setEditCmdLeg(editCmdLeg===leg?"":leg)}
                 style={{padding:"4px 8px",borderRadius:5,border:"2px solid "+(editCmdLeg===leg?"#5b21b6":"#e5e7eb"),background:editCmdLeg===leg?"#5b21b6":"#fff",color:editCmdLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer"}}>
                 <strong>{leg}</strong> <span style={{fontSize:9,opacity:0.7}}>{desc}</span>
@@ -4480,6 +4491,48 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
 
       {confirmDel&&<Confirm msg={"Excluir escala "+confirmDel.nome+"?"} onYes={()=>{setEscalas(es=>es.filter(e=>e.id!==confirmDel.id));setConfirmDel(null);setEscalaSel(null);}} onNo={()=>setConfirmDel(null)}/>}
 
+      {/* Modal gerenciar legendas */}
+      {modalLeg&&(
+        <Modal title="Gerenciar Legendas de Serviço" onClose={()=>setModalLeg(false)} wide>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Adicionar nova legenda</div>
+            <div style={{display:"grid",gridTemplateColumns:"120px 1fr auto",gap:8,alignItems:"end"}}>
+              <Input label="Sigla (ex: R22)" value={formLeg.sigla} onChange={e=>setFormLeg(f=>({...f,sigla:e.target.value.toUpperCase().slice(0,5)}))} placeholder="R22"/>
+              <Input label="Descrição (ex: 07h às 19h)" value={formLeg.desc} onChange={e=>setFormLeg(f=>({...f,desc:e.target.value}))} placeholder="07h às 19h"/>
+              <Btn onClick={()=>{
+                if(!formLeg.sigla.trim()||!formLeg.desc.trim()){alert("Sigla e descrição obrigatórias.");return;}
+                setLegendasCustom(lc=>({...(lc||{}), [formLeg.sigla.trim()]:formLeg.desc.trim()}));
+                setFormLeg({sigla:"",desc:""});
+              }}>+ Adicionar</Btn>
+            </div>
+          </div>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Legendas base do sistema</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:4,maxHeight:120,overflowY:"auto"}}>
+              {Object.entries(LEGENDAS_BASE).map(([k,v])=>(
+                <span key={k} style={{background:"#f3f4f6",borderRadius:5,padding:"3px 8px",fontSize:11,color:"#374151"}}><strong>{k}</strong>: {v}</span>
+              ))}
+            </div>
+          </div>
+          {Object.keys(legendasCustom||{}).length>0&&(
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:6}}>Legendas personalizadas</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                {Object.entries(legendasCustom||{}).map(([k,v])=>(
+                  <span key={k} style={{background:"#f0f4ff",borderRadius:5,padding:"3px 8px",fontSize:11,display:"flex",alignItems:"center",gap:5}}>
+                    <strong>{k}</strong>: {v}
+                    <button onClick={()=>setLegendasCustom(lc=>{const n={...(lc||{})};delete n[k];return n;})} style={{background:"none",border:"none",color:"#dc2626",cursor:"pointer",fontSize:12,lineHeight:1}}>✕</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}>
+            <Btn onClick={()=>setModalLeg(false)}>✓ Fechar</Btn>
+          </div>
+        </Modal>
+      )}
+
       {/* Abas + botões */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
@@ -4495,6 +4548,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         </div>
         {escalaAtual&&(
           <div style={{display:"flex",gap:5,marginLeft:6}}>
+            <button onClick={()=>setModalLeg(true)} style={{background:"#f0f4ff",color:"#1e3a5f",border:"1px solid #c7d7f9",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>📋 Legendas</button>
             <button onClick={imprimirEscala} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir</button>
             <button onClick={()=>setConfirmDel(escalaAtual)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",color:"#dc2626",cursor:"pointer",fontSize:11}}>🗑</button>
           </div>
@@ -4678,7 +4732,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
               );
             })}
             <div style={{padding:"6px 10px",background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:6,fontSize:10,color:"#374151",marginTop:6,lineHeight:1.6}}>
-              <strong>Legendas:</strong> [ {Object.entries(LEGENDAS_ESCALA).map(([k,v])=>k+": "+v).join(", ")} ]
+              <strong>Legendas:</strong> [ {Object.entries(todasLegendas).map(([k,v])=>k+": "+v).join(", ")} ]
             </div>
           </div>
         );
@@ -4713,6 +4767,27 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
   const extrasDoMes=escExtras.filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
   const extAtual=extSel?extrasDoMes.find(e=>e.id===extSel):extrasDoMes[0]||null;
   const escOrd=escalas.filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+
+  // ── Sync indicator ───────────────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState(null);
+  useEffect(()=>{
+    if(!isConfigured) return;
+    supabase.from("esc_extras").select("id").limit(1)
+      .then(({error})=>setSyncStatus(error?"error":null))
+      .catch(()=>setSyncStatus("error"));
+  },[]);
+
+  async function forceSyncExtras() {
+    setSyncStatus("syncing");
+    let ok=0, err=0;
+    for(const ex of escExtras) {
+      const{id,...rest}=ex;
+      const{error}=await supabase.from("esc_extras").upsert({id:Number(id),data:rest});
+      if(error){err++;console.error("Sync extra error:",error);}else{ok++;}
+    }
+    setSyncStatus(err>0?"error":null);
+    alert(ok+" escala(s) extra sincronizada(s)!"+(err>0?" "+err+" erro(s) — veja o console.":""));
+  }
 
   function criarExtra(){
     if(!formExt.nome.trim()||!formExt.sigla.trim()){alert("Nome e sigla obrigatórios.");return;}
@@ -4794,6 +4869,23 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
 
   return (
     <div>
+      {/* Sync indicator */}
+      {syncStatus==="error"&&escExtras.length>0&&(
+        <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12,display:"flex",alignItems:"center",gap:10}}>
+          <span>❌ Tabela <code>esc_extras</code> não encontrada no Supabase. Escalas extras ficam salvas só neste navegador.</span>
+          <span style={{flex:1,color:"#6b7280",fontSize:11}}>Execute o SQL no painel do Supabase para criar a tabela.</span>
+        </div>
+      )}
+      {syncStatus===null&&escExtras.length>0&&isConfigured&&(
+        <div style={{background:"#f0f4ff",border:"1px solid #c7d7f9",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12,display:"flex",alignItems:"center",gap:10}}>
+          <span>🔄 {escExtras.length} escala(s) extra no dispositivo. Outros navegadores não estão vendo?</span>
+          <button onClick={forceSyncExtras} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+            Sincronizar agora
+          </button>
+        </div>
+      )}
+      {syncStatus==="syncing"&&<div style={{background:"#f0f4ff",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12}}>⏳ Sincronizando...</div>}
+
       {/* Conflito */}
       {conflito&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000}}>
@@ -5147,7 +5239,7 @@ function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPe
         </div>
 
         {aba==="efetivo"&&<AbaEfetivoPelotao pelotao={pel} officers={officers} afastamentos={afastamentos} ferias={ferias} mes={mes} ano={ano}/>}
-        {aba==="escala"&&<AbaEscala pelotao={pel} escalas={escalas} setEscalas={setEscalas} officers={officers} mes={mes} ano={ano} afastamentos={afastamentos} ferias={ferias} escExtras={escExtras} onGoExtra={(eid)=>{setExtSel(eid);setAba("extras");}}/>}
+        {aba==="escala"&&<AbaEscala pelotao={pel} escalas={escalas} setEscalas={setEscalas} officers={officers} mes={mes} ano={ano} afastamentos={afastamentos} ferias={ferias} escExtras={escExtras} onGoExtra={(eid)=>{setExtSel(eid);setAba("extras");}} legendasCustom={legendasCustom} setLegendasCustom={setLegendasCustom}/>}
         {aba==="extras"&&<AbaExtras pelotao={pel} escExtras={escExtras} setEscExtras={setEscExtras} escalas={escalas} officers={officers} mes={mes} ano={ano} extSel={extSel} setExtSel={setExtSel}/>}
         {["ocorrências","saúde","vantagens"].includes(aba)&&(
           <div style={{textAlign:"center",padding:40,color:"#9ca3af",background:"#f9fafb",borderRadius:10,border:"2px dashed #e5e7eb"}}>
@@ -6038,6 +6130,9 @@ export default function App() {
   const [pelotoes, setPelotoes] = useSupabaseState("sirh_pelotoes", []);
   const [escalas, setEscalas] = useSupabaseState("sirh_escalas", []);
   const [escExtras, setEscExtras] = useSupabaseState("sirh_extras", []);
+  const [legendasCustom, setLegendasCustom] = useSupabaseState("sirh_legendas_custom", {});
+  // Sync custom legends to global variable so LEGENDAS_ESCALA Proxy picks them up
+  useEffect(()=>{ LEGENDAS_CUSTOM = legendasCustom||{}; }, [legendasCustom]);
   const [dashFilter, setDashFilter] = useState(null);
   const [feriasDetalhe, setFeriasDetalhe] = useState(null);
 
