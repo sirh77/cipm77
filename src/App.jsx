@@ -4690,7 +4690,12 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                         <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontSize:9,color:"#6b7280",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",background:"#faf5ff"}}>{cmdOfficer.cargo||""}</td>
                         {dias.map(d=>{
                           const leg=(escalaAtual.cmdCelulas||{})[d];
+                          const extDia=calcExtrasParaDia(cmdOfficer.id,d);
                           const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;
+                          if(extDia.length>0) return renderCell(leg,extDia,isH,isW,
+                            ()=>{setEditCmdCell({dia:d});setEditCmdLeg(leg||"");},
+                            (eid)=>onGoExtra&&onGoExtra(eid)
+                          );
                           const bg=leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#ede9fe":isW?"#fff5f5":"#faf5ff";
                           return <td key={d} style={{...tdS,background:bg,cursor:"pointer",fontWeight:leg?700:400,color:leg?"#5b21b6":"#d8b4fe"}}
                             onClick={()=>{setEditCmdCell({dia:d});setEditCmdLeg(leg||"");}}>{leg||""}</td>;
@@ -4789,8 +4794,11 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
   const [modalAddPol, setModalAddPol] = useState(null);
   const [conflito, setConflito]       = useState(null);
   const [confirmDel, setConfirmDel]   = useState(null);
-  const [modalEditNome, setModalEditNome] = useState(null); // extra being edited
+  const [modalEditNome, setModalEditNome] = useState(null);
   const [formEditNome, setFormEditNome]   = useState({nome:"",sigla:"",tipo:"HE"});
+  const [modalRelHoras, setModalRelHoras] = useState(false);
+  const [relSort, setRelSort]             = useState("grau"); // "grau" or "horas"
+  const [relPrint, setRelPrint]           = useState(false);
   const [formExt, setFormExt]   = useState({nome:"",sigla:"",tipo:"HE"});
   const [formDia, setFormDia]   = useState({dia:1,horaInicio:"16:00",horaFim:"22:00"});
   const setFE=(k,v)=>setFormExt(f=>({...f,[k]:v}));
@@ -4917,6 +4925,139 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
 
   return (
     <div>
+      {/* Modal Relação de Horas Extras */}
+      {modalRelHoras&&(()=>{
+        const extDoMes=escExtras.filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
+        // Coletar todos os policiais envolvidos em qualquer extra do mês
+        const pidsSet=new Set();
+        extDoMes.forEach(ex=>(ex.dias||[]).forEach(d=>(d.policiais||[]).forEach(pid=>pidsSet.add(pid))));
+        // Calcular horas por policial por escala
+        let rows=[...pidsSet].map(pid=>{
+          const o=officers.find(x=>x.id===pid);
+          if(!o) return null;
+          const porExtra=extDoMes.map(ex=>{
+            const h=(ex.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((s,d)=>s+calcHorasExtra(d.horaInicio,d.horaFim),0);
+            return{id:ex.id,sigla:ex.sigla,tipo:ex.tipo,h};
+          });
+          const totalVD=porExtra.filter(x=>x.tipo==="VD").reduce((s,x)=>s+x.h,0);
+          const totalHE=porExtra.filter(x=>x.tipo==="HE").reduce((s,x)=>s+x.h,0);
+          return{pid,o,porExtra,totalVD,totalHE,total:totalVD+totalHE};
+        }).filter(Boolean);
+        // Ordenar
+        if(relSort==="grau") rows=rows.sort((a,b)=>rankSort(a.o,b.o));
+        else rows=rows.sort((a,b)=>b.total-a.total);
+
+        function imprimir(sortType){
+          const sorted=sortType==="grau"?[...rows].sort((a,b)=>rankSort(a.o,b.o)):[...rows].sort((a,b)=>b.total-a.total);
+          const mNome=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1];
+          const emit=window.__loggedUser?`${window.__loggedUser.grau||""} ${window.__loggedUser.nome||""}, Mat. ${cleanMat(window.__loggedUser.matricula||"")}`:("Sistema");
+          const dh=new Date().toLocaleDateString("pt-BR")+" às "+new Date().toLocaleTimeString("pt-BR");
+          const css="<style>@page{size:A4 landscape;margin:12mm 10mm;}body{font-family:Arial,sans-serif;font-size:9px;margin:0;padding:0;}.cab{text-align:center;font-weight:bold;font-size:9px;line-height:1.7;text-transform:uppercase;margin-bottom:6px;}.tit{text-align:center;font-size:10px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;margin-bottom:10px;}table{width:100%;border-collapse:collapse;table-layout:fixed;}th,td{border:1px solid #ccc;padding:3px 5px;font-size:8px;text-align:center;}th{background:#f0f4ff;font-weight:bold;}td.nm{text-align:left;}th.nm{text-align:left;}td.vd{background:#fef3c7;font-weight:bold;color:#92400e;}td.he{background:#dcfce7;font-weight:bold;color:#15803d;}td.tot{background:#dbeafe;font-weight:bold;color:#1d4ed8;}.rod{margin-top:8px;border-top:1px solid #ccc;padding-top:4px;font-size:7px;color:#555;font-style:italic;}</style>";
+          let html="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Relação de HE/VD</title>"+css+"</head><body>";
+          html+="<div class='cab'>POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>";
+          html+="<div class='tit'>RELAÇÃO DE HORAS EXTRAS / VD — "+mNome.toUpperCase()+"/"+ano+"</div>";
+          html+="<p style='font-size:8px;margin-bottom:8px;'>Ordenação: "+(sortType==="grau"?"Grau Hierárquico":"Maior quantidade de horas")+"</p>";
+          html+="<table><thead><tr><th class='nm' style='width:160px;'>Nome</th><th class='nm' style='width:80px;'>Matrícula</th>";
+          extDoMes.forEach(ex=>{ html+=`<th style='width:50px;'>${ex.sigla}<br><span style='font-size:7px;font-weight:400;'>${ex.nome.slice(0,12)}</span></th>`; });
+          html+="<th class='vd' style='width:40px;'>VD<br><span style='font-size:7px;'>Total h</span></th>";
+          html+="<th class='he' style='width:40px;'>HE<br><span style='font-size:7px;'>Total h</span></th>";
+          html+="<th class='tot' style='width:40px;'>TOTAL<br><span style='font-size:7px;'>h</span></th></tr></thead><tbody>";
+          sorted.forEach((r,i)=>{
+            html+=`<tr style='background:${i%2===0?"#fff":"#f9f9f9"};'><td class='nm'>${r.o.grau} ${r.o.nome.toUpperCase()}</td><td class='nm'>${cleanMat(r.o.matricula)}</td>`;
+            r.porExtra.forEach(pe=>{ html+=`<td>${pe.h||""}</td>`; });
+            html+=`<td class='vd'>${r.totalVD||""}</td><td class='he'>${r.totalHE||""}</td><td class='tot'>${r.total||""}</td></tr>`;
+          });
+          // Linha de totais
+          html+="<tr style='background:#f0f4ff;font-weight:bold;'><td class='nm'>TOTAL GERAL</td><td></td>";
+          extDoMes.forEach(ex=>{ const tot=rows.reduce((s,r)=>s+(r.porExtra.find(p=>p.id===ex.id)?.h||0),0); html+=`<td>${tot||""}</td>`; });
+          const tvd=rows.reduce((s,r)=>s+r.totalVD,0), the=rows.reduce((s,r)=>s+r.totalHE,0);
+          html+=`<td class='vd'>${tvd||""}</td><td class='he'>${the||""}</td><td class='tot'>${tvd+the||""}</td></tr>`;
+          html+="</tbody></table>";
+          html+="<div class='rod'>Relatório emitido por "+emit+" em "+dh+" — SiRH77</div></body></html>";
+          const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+          const url=URL.createObjectURL(blob);
+          const w=window.open(url,"_blank");
+          if(w)w.addEventListener("load",()=>{setTimeout(()=>{w.print();URL.revokeObjectURL(url);},400);});
+        }
+
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+            <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:900,overflow:"hidden"}}>
+              <div style={{background:"linear-gradient(135deg,#1e3a5f,#2d5986)",padding:"13px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{color:"#fff",fontWeight:700,fontSize:14}}>📊 Relação de Horas Extras / VD — {["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1]}/{ano}</span>
+                <button onClick={()=>setModalRelHoras(false)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"3px 10px",cursor:"pointer"}}>✕</button>
+              </div>
+              <div style={{padding:16}}>
+                {/* Opções de ordenação e impressão */}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{fontSize:12,fontWeight:600}}>Ordenar por:</span>
+                    {[["grau","Grau Hierárquico"],["horas","Maior quantidade de horas"]].map(([v,l])=>(
+                      <button key={v} onClick={()=>setRelSort(v)}
+                        style={{padding:"4px 12px",border:"2px solid "+(relSort===v?"#1e3a5f":"#e5e7eb"),borderRadius:6,background:relSort===v?"#1e3a5f":"#fff",color:relSort===v?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:relSort===v?600:400}}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>imprimir("grau")} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir por Grau</button>
+                    <button onClick={()=>imprimir("horas")} style={{background:"#374151",color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir por Horas</button>
+                  </div>
+                </div>
+                {/* Tabela de resumo */}
+                <div style={{overflowX:"auto"}}>
+                  <table style={{borderCollapse:"collapse",fontSize:11,width:"100%"}}>
+                    <thead>
+                      <tr>
+                        <th style={{padding:"6px 10px",textAlign:"left",borderBottom:"2px solid #1e3a5f",background:"#f0f4ff",minWidth:160}}>Nome</th>
+                        {extDoMes.map(ex=>(
+                          <th key={ex.id} style={{padding:"6px 8px",textAlign:"center",borderBottom:"2px solid #1e3a5f",background:"#f0f4ff",minWidth:60}}>
+                            <div style={{fontWeight:700}}>{ex.sigla}</div>
+                            <div style={{fontSize:9,fontWeight:400,color:"#6b7280"}}>{ex.nome.slice(0,15)}</div>
+                            <Badge color={ex.tipo==="HE"?"#fef3c7":"#dbeafe"} textColor={ex.tipo==="HE"?"#92400e":"#1d4ed8"} size={9}>{ex.tipo}</Badge>
+                          </th>
+                        ))}
+                        <th style={{padding:"6px 8px",textAlign:"center",borderBottom:"2px solid #1e3a5f",background:"#fef3c7",color:"#92400e",minWidth:50}}>VD<br/><span style={{fontSize:9,fontWeight:400}}>Total h</span></th>
+                        <th style={{padding:"6px 8px",textAlign:"center",borderBottom:"2px solid #1e3a5f",background:"#dcfce7",color:"#15803d",minWidth:50}}>HE<br/><span style={{fontSize:9,fontWeight:400}}>Total h</span></th>
+                        <th style={{padding:"6px 8px",textAlign:"center",borderBottom:"2px solid #1e3a5f",background:"#dbeafe",color:"#1d4ed8",minWidth:50}}>TOTAL<br/><span style={{fontSize:9,fontWeight:400}}>h</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r,i)=>(
+                        <tr key={r.pid} style={{background:i%2===0?"#fff":"#f9fafb"}}>
+                          <td style={{padding:"5px 10px",borderBottom:"1px solid #f0f0f0",fontWeight:500}}>{r.o.grau} {r.o.nome.toUpperCase()}</td>
+                          {r.porExtra.map(pe=>(
+                            <td key={pe.id} style={{padding:"5px 8px",borderBottom:"1px solid #f0f0f0",textAlign:"center",fontWeight:pe.h?700:400,color:pe.h?"#374151":"#d1d5db"}}>{pe.h||""}</td>
+                          ))}
+                          <td style={{padding:"5px 8px",borderBottom:"1px solid #f0f0f0",textAlign:"center",fontWeight:700,background:"#fffbeb",color:"#92400e"}}>{r.totalVD||""}</td>
+                          <td style={{padding:"5px 8px",borderBottom:"1px solid #f0f0f0",textAlign:"center",fontWeight:700,background:"#f0fdf4",color:"#15803d"}}>{r.totalHE||""}</td>
+                          <td style={{padding:"5px 8px",borderBottom:"1px solid #f0f0f0",textAlign:"center",fontWeight:700,background:"#eff6ff",color:"#1d4ed8"}}>{r.total||""}</td>
+                        </tr>
+                      ))}
+                      {/* Linha de totais */}
+                      <tr style={{background:"#f0f4ff",fontWeight:700}}>
+                        <td style={{padding:"5px 10px",borderTop:"2px solid #1e3a5f"}}>TOTAL GERAL</td>
+                        {extDoMes.map(ex=>{
+                          const tot=rows.reduce((s,r)=>s+(r.porExtra.find(p=>p.id===ex.id)?.h||0),0);
+                          return <td key={ex.id} style={{padding:"5px 8px",borderTop:"2px solid #1e3a5f",textAlign:"center"}}>{tot||""}</td>;
+                        })}
+                        <td style={{padding:"5px 8px",borderTop:"2px solid #1e3a5f",textAlign:"center",color:"#92400e"}}>{rows.reduce((s,r)=>s+r.totalVD,0)||""}</td>
+                        <td style={{padding:"5px 8px",borderTop:"2px solid #1e3a5f",textAlign:"center",color:"#15803d"}}>{rows.reduce((s,r)=>s+r.totalHE,0)||""}</td>
+                        <td style={{padding:"5px 8px",borderTop:"2px solid #1e3a5f",textAlign:"center",color:"#1d4ed8"}}>{rows.reduce((s,r)=>s+r.total,0)||""}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {rows.length===0&&<div style={{textAlign:"center",padding:24,color:"#9ca3af"}}>Nenhum policial com horas extras no período.</div>}
+                <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}>
+                  <Btn variant="secondary" onClick={()=>setModalRelHoras(false)}>Fechar</Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Sync error indicator */}
       {syncStatus==="error"&&(
         <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12}}>
@@ -5047,6 +5188,8 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
         </div>
         {extAtual&&(
           <div style={{display:"flex",gap:5,marginLeft:8}}>
+            <button onClick={()=>setModalRelHoras(true)}
+              style={{background:"#f0fdf4",color:"#15803d",border:"1px solid #bbf7d0",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>📊 Relação de Horas</button>
             <button onClick={()=>{setFormEditNome({nome:extAtual.nome,sigla:extAtual.sigla,tipo:extAtual.tipo});setModalEditNome(extAtual);}}
               style={{background:"#f0f4ff",color:"#1e3a5f",border:"1px solid #c7d7f9",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>✏️ Editar</button>
             <button onClick={imprimirExtra} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer"}}>🖨️ Imprimir</button>
