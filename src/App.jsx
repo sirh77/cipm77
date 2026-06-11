@@ -4086,7 +4086,7 @@ function ModCorregedoria({ officers, corregedoria, setCorregedoria, perm, logged
 
 // Módulos do sistema e seus labels
 // ─── MÓDULO GESTÃO DE PELOTÃO ─────────────────────────────────────────────
-// Legendas base do sistema (imutáveis)
+// Legendas base do sistema
 const LEGENDAS_BASE = {
   A1:"08h às 12h / 14h às 18h", A11:"22h às 06h", A4:"08h às 12h / 13h às 17h",
   B1:"07h às 13h", B2:"13h às 19h", C1:"07h às 19h", C11:"13h às 01h",
@@ -4097,11 +4097,7 @@ const LEGENDAS_BASE = {
   R21:"06h às 18h", AT:"Atestado", D:"Dispensa",
   P:"Licença Paternidade", LM:"Licença Maternidade",
 };
-// Legendas customizadas (carregadas do Supabase, mescladas com base)
-let LEGENDAS_CUSTOM = {};
-// Getter que mescla base + custom
-function getLegendas() { return {...LEGENDAS_BASE, ...LEGENDAS_CUSTOM}; }
-const LEGENDAS_ESCALA = new Proxy({}, { get: (_,k)=>(LEGENDAS_BASE[k]||LEGENDAS_CUSTOM[k]||undefined) });
+const LEGENDAS_ESCALA = LEGENDAS_BASE; // alias
 const HORAS_LEGENDA = {
   A1:8, A11:8, A4:8, B1:6, B2:6, C1:12, C11:12, C2:12, C8:12, C9:12,
   F5:24, G1:15, H5:16, M3:12, R19:12, R20:12, R21:12,
@@ -4275,7 +4271,23 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
     const dataHora=new Date().toLocaleDateString("pt-BR")+" às "+new Date().toLocaleTimeString("pt-BR");
     const titulo=escalaAtual.titulo+(escalaAtual.nome?" — "+escalaAtual.nome:"");
     const dias=Array.from({length:diasNoMes},(_,i)=>i+1);
-    const css=`<style>@page{size:A4 landscape;margin:12mm 10mm;}body{font-family:Arial,sans-serif;font-size:8px;margin:0;padding:0;}.cab{text-align:center;font-weight:bold;font-size:9px;line-height:1.7;text-transform:uppercase;margin-bottom:6px;}.tit{text-align:center;font-size:10px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;margin-bottom:8px;}.grp{background:#1e3a5f;color:#fff;padding:3px 8px;font-weight:bold;font-size:8px;margin:6px 0 2px;}table{width:100%;border-collapse:collapse;}th{background:#f0f4ff;padding:2px 1px;text-align:center;border:1px solid #ccc;font-size:7px;}th.nm{text-align:left;padding-left:4px;min-width:100px;}td{padding:2px 1px;text-align:center;border:1px solid #ddd;font-size:7px;white-space:nowrap;}td.nm{text-align:left;padding-left:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;}.rod{margin-top:8px;border-top:1px solid #ccc;padding-top:4px;font-size:7px;color:#555;font-style:italic;}.sab{background:#fee2e2;color:#991b1b;}.dom{background:#fee2e2;color:#991b1b;}.hj{background:#1e3a5f;color:#fff;}.f5{background:#dcfce7;}.c8,.c9,.r19,.r20{background:#dcfce7;}.jms,.at{background:#fee2e2;}.f{background:#dbeafe;}.cmd{background:#f0e6ff;font-weight:bold;}</style>`;
+    const W_NM=110, W_FN=70, W_DIA=16, W_TOT=24;
+    const css=`<style>@page{size:A4 landscape;margin:10mm 8mm;}body{font-family:Arial,sans-serif;font-size:7px;margin:0;padding:0;}
+    .cab{text-align:center;font-weight:bold;font-size:8px;line-height:1.7;text-transform:uppercase;margin-bottom:5px;}
+    .tit{text-align:center;font-size:9px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:3px 0;margin-bottom:6px;}
+    .grp{background:#1e3a5f;color:#fff;padding:2px 6px;font-weight:bold;font-size:7px;margin:5px 0 0;}
+    table{width:100%;border-collapse:collapse;table-layout:fixed;}
+    col.nm{width:${W_NM}px;}col.fn{width:${W_FN}px;}col.d{width:${W_DIA}px;}col.t{width:${W_TOT}px;}
+    th,td{border:1px solid #ccc;font-size:6.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 2px;text-align:center;}
+    th{background:#f0f4ff;font-weight:bold;}
+    th.nm,td.nm{text-align:left;padding-left:3px;}
+    .sab,.dom{background:#fee2e2 !important;color:#991b1b;}
+    .c8,.c9,.r19,.r20,.f5,.cr{background:#dcfce7;}
+    .jms,.at{background:#fee2e2;}
+    .f{background:#dbeafe;}
+    .lp,.lm,.p,.d{background:#fef3c7;}
+    .rod{margin-top:6px;border-top:1px solid #ccc;padding-top:3px;font-size:6.5px;color:#555;font-style:italic;}
+    </style>`;
     let html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>${css}</head><body>`;
     html+=`<div class="cab">POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>`;
     html+=`<div class="tit">${titulo}</div>`;
@@ -4284,7 +4296,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
     // Linha comandante
     if(cmdOfficer){
       const cmdCels=escalaAtual.cmdCelulas||{};
-      html+=`<div class="grp" style="background:#5b21b6;">COMANDANTE</div><table><thead><tr><th class="nm">Nome</th><th>Função</th>`;
+      html+=`<div class="grp" style="background:#5b21b6;">COMANDANTE</div><table><colgroup><col class="nm"><col class="fn">${dias.map(()=>'<col class="d">').join('')}<col class="t"><col class="t"><col class="t"><col class="t"></colgroup><thead><tr><th class="nm">Nome</th><th class="fn">Função</th>`;
       dias.forEach(d=>{const ds=DS[(pDia+d-1)%7];html+=`<th class="${ds==="Sab"?"sab":ds==="Dom"?"dom":""}">${ds.slice(0,1)}<br>${d}</th>`;});
       html+=`<th>Ad.N</th><th>Tot.h</th><th>VD</th><th>HE</th></tr></thead><tbody><tr><td class="nm">${cmdOfficer.grau} ${cmdOfficer.nome.toUpperCase()}</td><td>${cmdOfficer.cargo||""}</td>`;
       let tot=0,not=0;
@@ -4296,7 +4308,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       const membros=[...g.membros].sort((a,b)=>{const oa=officers.find(x=>x.id===a),ob=officers.find(x=>x.id===b);if(!oa||!ob)return 0;return rankSort(oa,ob);});
       if(!membros.length) return;
       const [,fg]=GRUPO_CORES[g.id]||["#1e3a5f","#fff"];
-      html+=`<div class="grp">GRUPO ${g.id}</div><table><thead><tr><th class="nm">Nome</th><th>Função</th>`;
+      html+=`<div class="grp">GRUPO ${g.id}</div><table><colgroup><col class="nm"><col class="fn">${dias.map(()=>'<col class="d">').join('')}<col class="t"><col class="t"><col class="t"><col class="t"></colgroup><thead><tr><th class="nm">Nome</th><th class="fn">Função</th>`;
       dias.forEach(d=>{const ds=DS[(pDia+d-1)%7];html+=`<th class="${ds==="Sab"?"sab":ds==="Dom"?"dom":""}">${ds.slice(0,1)}<br>${d}</th>`;});
       html+=`<th>Ad.N</th><th>Tot.h</th><th>VD</th><th>HE</th></tr></thead><tbody>`;
       membros.forEach(pid=>{
@@ -4305,7 +4317,8 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         const extrasAtivas=(escExtras||[]).filter(e=>e.pelotaoId===pelotao.id&&e.mes===mes&&e.ano===ano);
         const vd=extrasAtivas.filter(e=>e.tipo==="VD").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
         const he=extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
-        html+=`<tr><td class="nm">${o.grau} ${o.nome.toUpperCase()} ${cleanMat(o.matricula)}</td><td>${o.cargo||""}</td>`;
+        const funcaoPrint=(g.funcoes||{})[pid]||o.cargo||"";
+        html+=`<tr><td class="nm">${o.grau} ${o.nome.toUpperCase()} ${cleanMat(o.matricula)}</td><td>${funcaoPrint}</td>`;
         dias.forEach(d=>{
           const leg=(escalaAtual.celulas||{})[pid+"_"+d]||"";
           const exDia=extrasDoMes.find(ex=>(ex.dias||[]).some(dd=>dd.dia===d&&(dd.policiais||[]).includes(pid)));
@@ -4390,9 +4403,17 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
             <div style={{background:bg,color:fg,borderRadius:7,padding:"5px 12px",fontWeight:700,marginBottom:10}}>GRUPO {gId}</div>
             <BuscaPolicial officers={officers} excluirIds={g.membros} onSelect={o=>addMembro(eId,gId,o.id)}/>
             {g.membros.map(pid=>{const o=officers.find(x=>x.id===pid);return o?(
-              <div key={pid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f0f0f0"}}>
-                <Avatar name={o.nome} size={26}/><div style={{flex:1,fontSize:12}}><strong>{o.grau}</strong> {o.nome}</div>
-                <button onClick={()=>removeMembro(eId,gId,pid)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"3px 8px",color:"#dc2626",cursor:"pointer",fontSize:12}}>Excluir</button>
+              <div key={pid} style={{padding:"6px 0",borderBottom:"1px solid #f0f0f0"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                  <Avatar name={o.nome} size={26}/><div style={{flex:1,fontSize:12}}><strong>{o.grau}</strong> {o.nome}</div>
+                  <button onClick={()=>removeMembro(eId,gId,pid)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"3px 8px",color:"#dc2626",cursor:"pointer",fontSize:12}}>Excluir</button>
+                </div>
+                <select value={(escalaAtual.grupos.find(x=>x.id===gId)?.funcoes||{})[pid]||""}
+                  onChange={e=>setEscalas(es=>es.map(esc=>esc.id!==eId?esc:{...esc,grupos:esc.grupos.map(gg=>gg.id!==gId?gg:{...gg,funcoes:{...(gg.funcoes||{}),[pid]:e.target.value}})}))}
+                  style={{width:"100%",padding:"4px 8px",border:"1px solid #d1d5db",borderRadius:5,fontSize:11,background:"#fff"}}>
+                  <option value="">-- Selecionar função --</option>
+                  {["Comandante","Comandante/Motorista","Motorista/Guarnição","Motorista","Patrulheiro/Motorista","Patrulheiro","Sem função"].map(f=><option key={f} value={f}>{f}</option>)}
+                </select>
               </div>
             ):null;})}
             <div style={{display:"flex",justifyContent:"flex-end",marginTop:10}}><Btn onClick={()=>setModalGrupo(null)}>✓ Fechar</Btn></div>
@@ -4708,7 +4729,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                           return (
                             <tr key={pid}>
                               <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}</td>
-                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",color:"#6b7280",fontSize:9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.cargo||""}</td>
+                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",color:"#6b7280",fontSize:9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(escalaAtual.grupos.find(x=>x.id===g.id)?.funcoes||{})[pid]||o.cargo||""}</td>
                               {dias.map(d=>{
                                 const leg=(escalaAtual.celulas||{})[pid+"_"+d];
                                 const extDia=calcExtrasParaDia(pid,d);
@@ -5126,7 +5147,7 @@ function AbaEfetivoPelotao({ pelotao, officers, afastamentos, ferias, mes, ano }
 }
 
 // ─── ModPelotao principal ────────────────────────────────────────────────────
-function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPelotoes, escalas, setEscalas, escExtras, setEscExtras, loggedUser, perm, locations }) {
+function ModPelotao({ officers, afastamentos, ferias, vantagens, pelotoes, setPelotoes, escalas, setEscalas, escExtras, setEscExtras, legendasCustom, setLegendasCustom, loggedUser, perm, locations }) {
   const hoje = new Date();
   const [mes, setMes] = useState(hoje.getMonth()+1);
   const [ano, setAno] = useState(hoje.getFullYear());
@@ -6131,8 +6152,6 @@ export default function App() {
   const [escalas, setEscalas] = useSupabaseState("sirh_escalas", []);
   const [escExtras, setEscExtras] = useSupabaseState("sirh_extras", []);
   const [legendasCustom, setLegendasCustom] = useSupabaseState("sirh_legendas_custom", {});
-  // Sync custom legends to global variable so LEGENDAS_ESCALA Proxy picks them up
-  useEffect(()=>{ LEGENDAS_CUSTOM = legendasCustom||{}; }, [legendasCustom]);
   const [dashFilter, setDashFilter] = useState(null);
   const [feriasDetalhe, setFeriasDetalhe] = useState(null);
 
@@ -6249,6 +6268,7 @@ export default function App() {
           vantagens={vantagens} pelotoes={pelotoes} setPelotoes={setPelotoes}
           escalas={escalas} setEscalas={setEscalas} locations={locations}
           escExtras={escExtras} setEscExtras={setEscExtras}
+          legendasCustom={legendasCustom} setLegendasCustom={setLegendasCustom}
           loggedUser={loggedUser} perm={perm}/>}
         {page==="exportar" && (perm.admin||perm.verExportar) && <ModExportar officers={officers}/>}
         {page==="admin" && perm.admin && <ModAdmin users={users} setUsers={setUsers} officers={officers}/>}
