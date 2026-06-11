@@ -4495,17 +4495,28 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
           <div style={{marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Legenda de serviço</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-              {["C8","C9","R19","R20","F5","F","JMS","LP","AT","D","CR"].map(leg=>(
+              {Object.entries(todasLegendas).map(([leg,desc])=>(
                 <button key={leg} onClick={()=>setCmdLeg(leg)}
-                  style={{padding:"5px 10px",borderRadius:5,border:"2px solid "+(cmdLeg===leg?"#5b21b6":"#e5e7eb"),background:cmdLeg===leg?"#5b21b6":"#fff",color:cmdLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:cmdLeg===leg?700:400}}>
-                  {leg} <span style={{fontSize:9,opacity:0.7}}>{LEGENDAS_ESCALA[leg]||""}</span>
+                  style={{padding:"4px 9px",borderRadius:5,border:"2px solid "+(cmdLeg===leg?"#5b21b6":"#e5e7eb"),background:cmdLeg===leg?"#5b21b6":"#fff",color:cmdLeg===leg?"#fff":"#374151",fontSize:11,cursor:"pointer",fontWeight:cmdLeg===leg?700:400}}>
+                  {leg} <span style={{fontSize:9,opacity:0.7}}>{desc}</span>
                 </button>
               ))}
             </div>
           </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-            <Btn variant="secondary" onClick={()=>{setModalCmd(false);setCmdDias([]);}}>Cancelar</Btn>
-            <Btn onClick={()=>applyCmd(escalaAtual.id)} disabled={!cmdDias.length}>✓ Aplicar ({cmdDias.length} dias)</Btn>
+          <div style={{display:"flex",gap:8,justifyContent:"space-between",alignItems:"center"}}>
+            <button onClick={()=>{
+              if(!escalaAtual) return;
+              if(window.confirm("Limpar toda a escala do Comandante?")) {
+                setEscalas(es=>es.map(e=>e.id!==escalaAtual.id?e:{...e,cmdCelulas:{}}));
+                setModalCmd(false); setCmdDias([]);
+              }
+            }} style={{background:"#fee2e2",color:"#dc2626",border:"1px solid #fca5a5",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontWeight:500}}>
+              🗑 Limpar toda a escala do Comandante
+            </button>
+            <div style={{display:"flex",gap:8}}>
+              <Btn variant="secondary" onClick={()=>{setModalCmd(false);setCmdDias([]);}}>Cancelar</Btn>
+              <Btn onClick={()=>applyCmd(escalaAtual.id)} disabled={!cmdDias.length}>✓ Aplicar ({cmdDias.length} dias)</Btn>
+            </div>
           </div>
         </Modal>
       )}
@@ -4800,14 +4811,28 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
 
   async function forceSyncExtras() {
     setSyncStatus("syncing");
+    // CRÍTICO: Se o Supabase retornou [] (tabela vazia), o state também é [].
+    // Ler do localStorage para recuperar dados que ainda não foram sincronizados.
+    let dataParaSync = escExtras;
+    if (!dataParaSync.length) {
+      try {
+        const s = localStorage.getItem("sirh_extras");
+        if (s) { dataParaSync = JSON.parse(s); }
+      } catch {}
+    }
+    if (!dataParaSync.length) {
+      alert("Nenhuma escala extra encontrada para sincronizar."); setSyncStatus(null); return;
+    }
     let ok=0, err=0;
-    for(const ex of escExtras) {
+    for(const ex of dataParaSync) {
       const{id,...rest}=ex;
       const{error}=await supabase.from("esc_extras").upsert({id:Number(id),data:rest});
-      if(error){err++;console.error("Sync extra error:",error);}else{ok++;}
+      if(error){err++;console.error("Sync extra error:",id,error.message);}else{ok++;}
     }
+    if(ok>0) setEscExtras(dataParaSync); // Atualiza state com dados recuperados
     setSyncStatus(err>0?"error":null);
-    alert(ok+" escala(s) extra sincronizada(s)!"+(err>0?" "+err+" erro(s) — veja o console.":""));
+    if(err>0) alert(ok+" sincronizada(s), "+err+" erro(s). Verifique se a tabela esc_extras existe no Supabase com RLS desabilitado.");
+    else alert("✓ "+ok+" escala(s) extra sincronizada(s) com sucesso! Outros navegadores já podem visualizar.");
   }
 
   function criarExtra(){
