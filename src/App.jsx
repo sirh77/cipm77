@@ -4789,6 +4789,8 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
   const [modalAddPol, setModalAddPol] = useState(null);
   const [conflito, setConflito]       = useState(null);
   const [confirmDel, setConfirmDel]   = useState(null);
+  const [modalEditNome, setModalEditNome] = useState(null); // extra being edited
+  const [formEditNome, setFormEditNome]   = useState({nome:"",sigla:"",tipo:"HE"});
   const [formExt, setFormExt]   = useState({nome:"",sigla:"",tipo:"HE"});
   const [formDia, setFormDia]   = useState({dia:1,horaInicio:"16:00",horaFim:"22:00"});
   const setFE=(k,v)=>setFormExt(f=>({...f,[k]:v}));
@@ -4915,22 +4917,12 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
 
   return (
     <div>
-      {/* Sync indicator */}
-      {syncStatus==="error"&&escExtras.length>0&&(
-        <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12,display:"flex",alignItems:"center",gap:10}}>
-          <span>❌ Tabela <code>esc_extras</code> não encontrada no Supabase. Escalas extras ficam salvas só neste navegador.</span>
-          <span style={{flex:1,color:"#6b7280",fontSize:11}}>Execute o SQL no painel do Supabase para criar a tabela.</span>
+      {/* Sync error indicator */}
+      {syncStatus==="error"&&(
+        <div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12}}>
+          ❌ Tabela <code>esc_extras</code> inacessível. Execute no Supabase: <code>ALTER TABLE esc_extras DISABLE ROW LEVEL SECURITY;</code>
         </div>
       )}
-      {syncStatus===null&&escExtras.length>0&&isConfigured&&(
-        <div style={{background:"#f0f4ff",border:"1px solid #c7d7f9",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12,display:"flex",alignItems:"center",gap:10}}>
-          <span>🔄 {escExtras.length} escala(s) extra no dispositivo. Outros navegadores não estão vendo?</span>
-          <button onClick={forceSyncExtras} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
-            Sincronizar agora
-          </button>
-        </div>
-      )}
-      {syncStatus==="syncing"&&<div style={{background:"#f0f4ff",borderRadius:8,padding:"8px 14px",marginBottom:10,fontSize:12}}>⏳ Sincronizando...</div>}
 
       {/* Conflito */}
       {conflito&&(
@@ -5004,6 +4996,40 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
 
       {confirmDel&&<Confirm msg={"Excluir escala extra "+confirmDel.nome+"?"} onYes={()=>{removeExtra(confirmDel.id);setConfirmDel(null);}} onNo={()=>setConfirmDel(null)}/>}
 
+      {/* Modal editar nome/sigla/tipo */}
+      {modalEditNome&&(
+        <Modal title={"Editar — "+modalEditNome.nome} onClose={()=>setModalEditNome(null)}>
+          <Input label="Nome da escala" value={formEditNome.nome} onChange={e=>setFormEditNome(f=>({...f,nome:e.target.value.toUpperCase()}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
+            <Input label="Sigla (até 3 letras)" value={formEditNome.sigla} onChange={e=>setFormEditNome(f=>({...f,sigla:e.target.value.toUpperCase().slice(0,3)}))}/>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:4}}>Tipo</div>
+              <div style={{display:"flex",gap:8}}>
+                {["HE","VD"].map(t=>(
+                  <button key={t} onClick={()=>setFormEditNome(f=>({...f,tipo:t}))}
+                    style={{flex:1,padding:"8px",border:"2px solid "+(formEditNome.tipo===t?"#1e3a5f":"#e5e7eb"),borderRadius:7,background:formEditNome.tipo===t?"#1e3a5f":"#fff",color:formEditNome.tipo===t?"#fff":"#374151",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    {t==="HE"?"⏱ HE":"📅 VD"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalEditNome(null)}>Cancelar</Btn>
+            <Btn onClick={()=>{
+              if(!formEditNome.nome.trim()||!formEditNome.sigla.trim()){alert("Nome e sigla obrigatórios.");return;}
+              setEscExtras(es=>es.map(e=>e.id!==modalEditNome.id?e:{
+                ...e,
+                nome:formEditNome.nome.trim(),
+                sigla:formEditNome.sigla.trim(),
+                tipo:formEditNome.tipo
+              }));
+              setModalEditNome(null);
+            }}>💾 Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
       {/* Abas de escalas extras */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
         <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
@@ -5021,6 +5047,8 @@ function AbaExtras({ pelotao, escExtras, setEscExtras, escalas, officers, mes, a
         </div>
         {extAtual&&(
           <div style={{display:"flex",gap:5,marginLeft:8}}>
+            <button onClick={()=>{setFormEditNome({nome:extAtual.nome,sigla:extAtual.sigla,tipo:extAtual.tipo});setModalEditNome(extAtual);}}
+              style={{background:"#f0f4ff",color:"#1e3a5f",border:"1px solid #c7d7f9",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>✏️ Editar</button>
             <button onClick={imprimirExtra} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer"}}>🖨️ Imprimir</button>
             <button onClick={()=>setConfirmDel(extAtual)} style={{background:"#fee2e2",border:"none",borderRadius:6,padding:"5px 10px",color:"#dc2626",fontSize:11,cursor:"pointer"}}>🗑 Excluir</button>
           </div>
