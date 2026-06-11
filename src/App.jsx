@@ -4141,7 +4141,16 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   const [editLeg, setEditLeg]       = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
   const [formEscala, setFormEscala] = useState({nome:"",tipo:"24x96",horaInicio:"06:30",horaFim:"18:30",horaInicio2:"18:30",horaFim2:"06:30"});
-  const [editandoEscala, setEditandoEscala] = useState(null); // escala being edited
+  const [editandoEscala, setEditandoEscala]   = useState(null);
+  const [modalLivre, setModalLivre]           = useState(null); // {pid, escalaId} for free scheduling
+  const [livreDias, setLivreDias]             = useState([]);
+  const [livreLeg, setLivreLeg]               = useState("C8");
+  const [modalPermutas, setModalPermutas]     = useState(false);
+  const [modalAddPermuta, setModalAddPermuta] = useState(false);
+  const [formPermuta, setFormPermuta]         = useState({dia:1, pid1:"", pid2:"", motivo:""});
+  const [modalAditamentos, setModalAditamentos] = useState(false);
+  const [modalAddAdit, setModalAddAdit]         = useState(false);
+  const [formAdit, setFormAdit] = useState({policialId:"",numAdit:"",motivo:"",dataInicio:"",dataFim:"",grupoOrigem:"",grupoDestino:""});
   const [modalCmd, setModalCmd]     = useState(false);
   const [cmdDias, setCmdDias]       = useState([]);
   const [cmdLeg, setCmdLeg]         = useState("C8");
@@ -4226,7 +4235,9 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       const novasCelulas={...(e.celulas||{})};
       const legDia=(e.horaInicio||"").startsWith("06:3")?"R19":"C8";
       const legNoite=(e.horaInicio2||"").startsWith("18:3")?"R20":"C9";
-      if(e.tipo==="24x96"){
+      if(e.tipo==="livre"){
+        // Escala livre: sem preenchimento automático
+      } else if(e.tipo==="24x96"){
         for(let d=1;d<=diasNoMes;d++) if((d-1-gi)%n===0) novasCelulas[pid+"_"+d]="F5";
       } else {
         const SLOTS={A:{dia:0,noite:1},B:{dia:4,noite:0},C:{dia:1,noite:2},D:{dia:2,noite:3},E:{dia:3,noite:4}};
@@ -4249,6 +4260,68 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
     }));
   }
 
+  function applyLivre(eid, pid) {
+    if(!livreDias.length||!livreLeg) return;
+    setEscalas(es=>es.map(e=>{
+      if(e.id!==eid) return e;
+      const nc={...(e.celulas||{})};
+      livreDias.forEach(d=>{nc[pid+"_"+d]=livreLeg;});
+      return {...e,celulas:nc};
+    }));
+    setModalLivre(null); setLivreDias([]);
+  }
+
+  function registrarPermuta(eid) {
+    const e = escalaAtual; if(!e) return;
+    const{dia,pid1,pid2,motivo}=formPermuta;
+    if(!pid1||!pid2||pid1===pid2){alert("Selecione dois policiais diferentes.");return;}
+    const leg1=(e.celulas||{})[pid1+"_"+dia]||"";
+    const leg2=(e.celulas||{})[pid2+"_"+dia]||"";
+    const nova={id:Date.now(),dia,pid1,pid2,leg1,leg2,motivo,dataRegistro:new Date().toISOString().slice(0,10)};
+    setEscalas(es=>es.map(esc=>esc.id!==eid?esc:{
+      ...esc,
+      celulas:{...(esc.celulas||{}),[pid1+"_"+dia]:leg2,[pid2+"_"+dia]:leg1},
+      permutas:[...(esc.permutas||[]),nova]
+    }));
+    setFormPermuta({dia:1,pid1:"",pid2:"",motivo:""});
+    setModalAddPermuta(false);
+  }
+
+  function registrarAditamento(eid) {
+    const{policialId,numAdit,motivo,dataInicio,dataFim,grupoOrigem,grupoDestino}=formAdit;
+    if(!policialId||!dataInicio||!dataFim||!grupoDestino){alert("Preencha todos os campos obrigatórios.");return;}
+    const novo={id:Date.now(),policialId,numAdit,motivo,dataInicio,dataFim,grupoOrigem,grupoDestino};
+    setEscalas(es=>es.map(esc=>esc.id!==eid?esc:{...esc,aditamentos:[...(esc.aditamentos||[]),novo]}));
+    setFormAdit({policialId:"",numAdit:"",motivo:"",dataInicio:"",dataFim:"",grupoOrigem:"",grupoDestino:""});
+    setModalAddAdit(false);
+  }
+
+  function imprimirPermutas() {
+    if(!escalaAtual) return;
+    const perms=escalaAtual.permutas||[];
+    const emit=window.__loggedUser?`${window.__loggedUser.grau||""} ${window.__loggedUser.nome||""}, Mat. ${cleanMat(window.__loggedUser.matricula||"")}`:("Sistema");
+    const dh=new Date().toLocaleDateString("pt-BR")+" às "+new Date().toLocaleTimeString("pt-BR");
+    const css="<style>@page{size:A4;margin:25mm 30mm 25mm 30mm;}body{font-family:Arial,sans-serif;font-size:12px;margin:0;padding:0;}.cab{text-align:center;font-weight:bold;font-size:11px;line-height:1.9;text-transform:uppercase;margin-bottom:12px;}.tit{text-align:center;font-size:13px;font-weight:bold;text-transform:uppercase;border-top:2px solid #000;border-bottom:2px solid #000;padding:7px 0;margin-bottom:16px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#f0f4ff;padding:5px 8px;border:1px solid #ccc;}td{padding:4px 8px;border:1px solid #ddd;}tr:nth-child(even) td{background:#f9f9f9;}.rod{margin-top:28px;border-top:1px solid #ccc;padding-top:6px;font-size:10px;color:#555;font-style:italic;}</style>";
+    const mNome=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][mes-1];
+    let html=`<!DOCTYPE html><html><head><meta charset='utf-8'><title>Permutas</title>${css}</head><body>`;
+    html+=`<div class='cab'>POLÍCIA MILITAR DA BAHIA<br>COMANDO DE POLICIAMENTO DA REGIÃO SUDOESTE<br>77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR</div>`;
+    html+=`<div class='tit'>RELAÇÃO DE PERMUTAS — ${escalaAtual.nome} — ${mNome.toUpperCase()}/${ano}</div>`;
+    html+=`<p style='font-size:11px;color:#555;margin-bottom:12px;'>Total de permutas: <strong>${perms.length}</strong></p>`;
+    if(perms.length>0){
+      html+=`<table><thead><tr><th>#</th><th>Dia</th><th>Policial A (cede)</th><th>Serv. A</th><th>Policial B (recebe)</th><th>Serv. B</th><th>Motivo</th><th>Registrado em</th></tr></thead><tbody>`;
+      perms.forEach((p,i)=>{
+        const o1=officers.find(x=>x.id===p.pid1), o2=officers.find(x=>x.id===p.pid2);
+        html+=`<tr><td>${i+1}</td><td>Dia ${p.dia}/${mes}</td><td>${o1?o1.grau+" "+o1.nome:"?"}</td><td>${p.leg1||"—"}</td><td>${o2?o2.grau+" "+o2.nome:"?"}</td><td>${p.leg2||"—"}</td><td>${p.motivo||"—"}</td><td>${p.dataRegistro||"—"}</td></tr>`;
+      });
+      html+=`</tbody></table>`;
+    } else { html+=`<p style='text-align:center;color:#999;'>Nenhuma permuta registrada.</p>`; }
+    html+=`<div class='rod'>Relatório emitido por ${emit} em ${dh} — SiRH77</div></body></html>`;
+    const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const w=window.open(url,"_blank");
+    if(w)w.addEventListener("load",()=>{setTimeout(()=>{w.print();URL.revokeObjectURL(url);},400);});
+  }
+
   function criarEscala() {
     if(!formEscala.nome.trim()){alert("Nome obrigatório.");return;}
     const grupos=["A","B","C","D","E"].map(id=>({id,membros:[]}));
@@ -4258,7 +4331,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       horaInicio:formEscala.horaInicio,horaFim:formEscala.horaFim,
       horaInicio2:formEscala.horaInicio2,horaFim2:formEscala.horaFim2,
       titulo:"ESCALA ORDINÁRIA "+["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"][mes-1]+"/"+ano,
-      grupos, celulas:{}, cmdCelulas:{}
+      grupos, celulas:{}, cmdCelulas:{}, permutas:[], aditamentos:[]
     };
     setEscalas(es=>[...es,nova]); setEscalaSel(nova.id); setModalCriar(false);
     setFormEscala({nome:"",tipo:"24x96",horaInicio:"06:30",horaFim:"18:30",horaInicio2:"18:30",horaFim2:"06:30"});
@@ -4364,11 +4437,16 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   const thS={padding:"3px 2px",textAlign:"center",fontSize:10,fontWeight:600,borderBottom:"2px solid #1e3a5f",minWidth:28,background:"#f8faff",whiteSpace:"nowrap"};
   const tdS={padding:"2px",textAlign:"center",fontSize:11,borderBottom:"1px solid #f0f0f0"};
 
+  const escalasDoMes = escalasDoPeriodo; // alias for use in modals
+
   // Render de célula unificado
-  function renderCell(leg, extDia, isH, isW, onClickOrd, onClickExtra, fromAfast=false) {
+  function renderCell(leg, extDia, isH, isW, onClickOrd, onClickExtra, fromAfast=false, isPermuta=false) {
     const bgOrd = leg?(leg==="F"?"#dbeafe":leg==="JMS"||leg==="AT"?"#fee2e2":leg==="CR"?"#fef3c7":"#dcfce7"):isH?"#eff6ff":isW?"#fff5f5":"#fff";
+    const permutaStyle = isPermuta ? {outline:"2px solid #d97706",outlineOffset:"-2px"} : {};
     if(!extDia||extDia.length===0){
-      return <td style={{...tdS,background:bgOrd,cursor:fromAfast?"default":"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb",fontStyle:fromAfast?"italic":"normal",outline:fromAfast?"2px solid #fca5a5":undefined}} onClick={onClickOrd}>{leg||""}</td>;
+      return <td style={{...tdS,background:isPermuta?"#fffbeb":bgOrd,cursor:fromAfast?"default":"pointer",fontWeight:leg?700:400,color:leg?"#1e3a5f":"#e5e7eb",fontStyle:fromAfast?"italic":"normal",...permutaStyle}} onClick={onClickOrd}>
+        {leg||""}{isPermuta&&<span style={{fontSize:7,verticalAlign:"top",color:"#d97706"}}>P</span>}
+      </td>;
     }
     // Tem extra: mostrar ordinário + badge de extra embaixo
     const ex1=extDia[0]; const ex2=extDia[1]||null;
@@ -4396,8 +4474,9 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
         <Modal title="Nova escala" onClose={()=>setModalCriar(false)}>
           <Input label="Nome (ex: CENTRO, CANDEIAS)" value={formEscala.nome} onChange={e=>setFE("nome",e.target.value)} placeholder="CENTRO"/>
           <Select label="Tipo" value={formEscala.tipo} onChange={e=>setFE("tipo",e.target.value)}>
-            <option value="24x96">24x96</option>
-            <option value="12x24x72">12x24 12x72</option>
+            <option value="24x96">24x96 (24h serviço / 96h folga)</option>
+            <option value="12x24x72">12x24 12x72 (dois turnos por dia)</option>
+            <option value="livre">Livre (escala manual por policial)</option>
           </Select>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             <Input label="Início 1º turno" type="time" value={formEscala.horaInicio} onChange={e=>setFE("horaInicio",e.target.value)}/>
@@ -4442,6 +4521,222 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
               }));
               setEditandoEscala(null);
             }}>💾 Salvar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal escala LIVRE por policial */}
+      {modalLivre&&escalaAtual&&(()=>{
+        const o=officers.find(x=>x.id===modalLivre.pid);
+        return(
+          <Modal title={"Escala de "+(o?o.grau+" "+o.nome:"policial")} onClose={()=>{setModalLivre(null);setLivreDias([]);}} wide>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Selecionar dias por padrão</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                {[["Todos",Array.from({length:diasNoMes},(_,i)=>i+1)],
+                  ["Dias úteis",Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>{const dw=(new Date(ano,mes-1,1).getDay()+d-1)%7;return dw>=1&&dw<=5;})],
+                  ["FDS",Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>{const dw=(new Date(ano,mes-1,1).getDay()+d-1)%7;return dw===0||dw===6;})],
+                  ...["Dom","Seg","Ter","Qua","Qui","Sex","Sab"].map((n,wi)=>[n,Array.from({length:diasNoMes},(_,i)=>i+1).filter(d=>(new Date(ano,mes-1,1).getDay()+d-1)%7===wi)])
+                ].map(([label,dias])=>(
+                  <button key={label} onClick={()=>setLivreDias(dias)} style={{padding:"4px 10px",border:"1px solid #e5e7eb",borderRadius:6,background:"#f3f4f6",fontSize:11,cursor:"pointer"}}>{label}</button>
+                ))}
+                <button onClick={()=>setLivreDias([])} style={{padding:"4px 10px",border:"1px solid #e5e7eb",borderRadius:6,background:"#fee2e2",color:"#dc2626",fontSize:11,cursor:"pointer"}}>Limpar</button>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,maxHeight:100,overflowY:"auto"}}>
+                {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=>{
+                  const dw=(new Date(ano,mes-1,1).getDay()+d-1)%7;const isW=dw===0||dw===6;const sel=livreDias.includes(d);
+                  return <button key={d} onClick={()=>setLivreDias(prev=>prev.includes(d)?prev.filter(x=>x!==d):[...prev,d])}
+                    style={{width:26,height:26,border:"2px solid "+(sel?"#1e3a5f":"#e5e7eb"),borderRadius:4,background:sel?"#1e3a5f":isW?"#fff5f5":"#fff",color:sel?"#fff":isW?"#991b1b":"#374151",fontSize:10,fontWeight:sel?700:400,cursor:"pointer"}}>{d}</button>;
+                })}
+              </div>
+              <div style={{marginTop:4,fontSize:11,color:"#6b7280"}}>{livreDias.length} dia(s) selecionado(s)</div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Legenda de serviço</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                {Object.entries(todasLegendas).map(([leg,desc])=>(
+                  <button key={leg} onClick={()=>setLivreLeg(leg)}
+                    style={{padding:"3px 8px",borderRadius:4,border:"2px solid "+(livreLeg===leg?"#1e3a5f":"#e5e7eb"),background:livreLeg===leg?"#1e3a5f":"#fff",color:livreLeg===leg?"#fff":"#374151",fontSize:10,cursor:"pointer",fontWeight:livreLeg===leg?700:400}}>
+                    <strong>{leg}</strong> <span style={{fontSize:8,opacity:0.7}}>{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <Btn variant="secondary" onClick={()=>{setModalLivre(null);setLivreDias([]);}}>Cancelar</Btn>
+              <Btn onClick={()=>applyLivre(escalaAtual.id,modalLivre.pid)} disabled={!livreDias.length}>✓ Aplicar ({livreDias.length} dias)</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Modal Permutas — visualizar e adicionar */}
+      {modalPermutas&&escalaAtual&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:700,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#d97706,#b45309)",padding:"13px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:14}}>🔄 Permutas — {escalaAtual.nome} — {["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"][mes-1]}/{ano}</span>
+              <button onClick={()=>setModalPermutas(false)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"3px 10px",cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{padding:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <span style={{fontSize:12,color:"#6b7280"}}>{(escalaAtual.permutas||[]).length} permuta(s) registrada(s) no mês</span>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={imprimirPermutas} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir</button>
+                  <Btn small onClick={()=>setModalAddPermuta(true)}>+ Nova permuta</Btn>
+                </div>
+              </div>
+              {(escalaAtual.permutas||[]).length===0
+                ?<div style={{textAlign:"center",padding:24,color:"#9ca3af"}}>Nenhuma permuta registrada.</div>
+                :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {(escalaAtual.permutas||[]).sort((a,b)=>a.dia-b.dia).map((p,i)=>{
+                    const o1=officers.find(x=>x.id===p.pid1),o2=officers.find(x=>x.id===p.pid2);
+                    return (
+                      <div key={p.id} style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7,padding:"8px 12px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                          <div>
+                            <span style={{fontWeight:700,color:"#92400e"}}>Dia {p.dia}/{mes}</span>
+                            <div style={{fontSize:12,marginTop:3}}><strong>{o1?o1.grau+" "+o1.nome:"?"}</strong> ({p.leg1||"sem serv."}) ⇄ <strong>{o2?o2.grau+" "+o2.nome:"?"}</strong> ({p.leg2||"sem serv."})</div>
+                            {p.motivo&&<div style={{fontSize:11,color:"#6b7280",marginTop:2}}>Motivo: {p.motivo}</div>}
+                            <div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>Registrado em: {p.dataRegistro}</div>
+                          </div>
+                          <button onClick={()=>{
+                            // Reverter permuta
+                            setEscalas(es=>es.map(esc=>esc.id!==escalaAtual.id?esc:{
+                              ...esc,
+                              celulas:{...(esc.celulas||{}),[p.pid1+"_"+p.dia]:p.leg1,[p.pid2+"_"+p.dia]:p.leg2},
+                              permutas:(esc.permutas||[]).filter(x=>x.id!==p.id)
+                            }));
+                          }} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"3px 8px",color:"#dc2626",cursor:"pointer",fontSize:11,flexShrink:0}}>✕ Reverter</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              }
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}><Btn variant="secondary" onClick={()=>setModalPermutas(false)}>Fechar</Btn></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal adicionar nova permuta */}
+      {modalAddPermuta&&escalaAtual&&(()=>{
+        const todosMembros=escalaAtual.grupos.flatMap(g=>(g.membros||[]).map(pid=>({pid,grupo:g.id,leg:(escalaAtual.celulas||{})[pid+"_"+formPermuta.dia]||""})));
+        return(
+          <Modal title="Registrar permuta" onClose={()=>setModalAddPermuta(false)}>
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Dia da permuta</div>
+              <select value={formPermuta.dia} onChange={e=>setFormPermuta(f=>({...f,dia:Number(e.target.value)}))}
+                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=><option key={d} value={d}>Dia {d}/{mes}</option>)}
+              </select>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Policial A (cede o serviço)</div>
+                <select value={formPermuta.pid1} onChange={e=>setFormPermuta(f=>({...f,pid1:Number(e.target.value)}))}
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11}}>
+                  <option value="">-- Selecionar --</option>
+                  {todosMembros.map(({pid,grupo,leg})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")} ({leg||"folga"})</option>:null;})}
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Policial B (recebe o serviço)</div>
+                <select value={formPermuta.pid2} onChange={e=>setFormPermuta(f=>({...f,pid2:Number(e.target.value)}))}
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11}}>
+                  <option value="">-- Selecionar --</option>
+                  {todosMembros.filter(x=>x.pid!==formPermuta.pid1).map(({pid,grupo,leg})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")} ({leg||"folga"})</option>:null;})}
+                </select>
+              </div>
+            </div>
+            <Input label="Motivo (opcional)" value={formPermuta.motivo} onChange={e=>setFormPermuta(f=>({...f,motivo:e.target.value}))} placeholder="Ex: Compromisso pessoal"/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+              <Btn variant="secondary" onClick={()=>setModalAddPermuta(false)}>Cancelar</Btn>
+              <Btn onClick={()=>registrarPermuta(escalaAtual.id)}>✓ Registrar permuta</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Modal Aditamentos */}
+      {modalAditamentos&&escalaAtual&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-start",justifyContent:"center",zIndex:1000,overflowY:"auto",padding:"24px 12px"}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:700,overflow:"hidden"}}>
+            <div style={{background:"linear-gradient(135deg,#0891b2,#0e7490)",padding:"13px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#fff",fontWeight:700,fontSize:14}}>📋 Aditamentos — {escalaAtual.nome}</span>
+              <button onClick={()=>setModalAditamentos(false)} style={{background:"rgba(255,255,255,0.2)",border:"none",color:"#fff",borderRadius:6,padding:"3px 10px",cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{padding:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <span style={{fontSize:12,color:"#6b7280"}}>{(escalaAtual.aditamentos||[]).length} aditamento(s)</span>
+                <Btn small onClick={()=>setModalAddAdit(true)}>+ Novo aditamento</Btn>
+              </div>
+              {(escalaAtual.aditamentos||[]).length===0
+                ?<div style={{textAlign:"center",padding:24,color:"#9ca3af"}}>Nenhum aditamento registrado.</div>
+                :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {(escalaAtual.aditamentos||[]).map(a=>{
+                    const o=officers.find(x=>x.id===a.policialId);
+                    return (
+                      <div key={a.id} style={{background:"#ecfeff",border:"1px solid #a5f3fc",borderRadius:7,padding:"8px 12px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between"}}>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:12,color:"#0e7490"}}>{a.numAdit&&`Nº ${a.numAdit} — `}{o?o.grau+" "+o.nome:"?"}</div>
+                            <div style={{fontSize:11,marginTop:3}}>Grupo: <strong>{a.grupoOrigem||"—"}</strong> → <strong>{a.grupoDestino||"—"}</strong></div>
+                            <div style={{fontSize:11}}>Período: {a.dataInicio?new Date(a.dataInicio+"T12:00:00").toLocaleDateString("pt-BR"):"?"} a {a.dataFim?new Date(a.dataFim+"T12:00:00").toLocaleDateString("pt-BR"):"?"}</div>
+                            {a.motivo&&<div style={{fontSize:11,color:"#6b7280"}}>Motivo: {a.motivo}</div>}
+                          </div>
+                          <button onClick={()=>setEscalas(es=>es.map(esc=>esc.id!==escalaAtual.id?esc:{...esc,aditamentos:(esc.aditamentos||[]).filter(x=>x.id!==a.id)}))}
+                            style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"3px 8px",color:"#dc2626",cursor:"pointer",fontSize:11,flexShrink:0}}>✕ Remover</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              }
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}><Btn variant="secondary" onClick={()=>setModalAditamentos(false)}>Fechar</Btn></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal adicionar aditamento */}
+      {modalAddAdit&&escalaAtual&&(
+        <Modal title="Novo aditamento" onClose={()=>setModalAddAdit(false)} wide>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Policial</div>
+              <select value={formAdit.policialId} onChange={e=>setFormAdit(f=>({...f,policialId:Number(e.target.value)}))}
+                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11}}>
+                <option value="">-- Selecionar --</option>
+                {escalaAtual.grupos.flatMap(g=>(g.membros||[]).map(pid=>({pid,grupo:g.id}))).map(({pid,grupo})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome}</option>:null;})}
+              </select>
+            </div>
+            <Input label="Nº Aditamento SPO" value={formAdit.numAdit} onChange={e=>setFormAdit(f=>({...f,numAdit:e.target.value}))} placeholder="Ex: 001/2026"/>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Grupo origem</div>
+              <select value={formAdit.grupoOrigem} onChange={e=>setFormAdit(f=>({...f,grupoOrigem:e.target.value}))}
+                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                <option value="">-- Selecionar --</option>
+                {["A","B","C","D","E"].map(g=><option key={g} value={g}>Grupo {g}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Grupo/Local destino</div>
+              <select value={formAdit.grupoDestino} onChange={e=>setFormAdit(f=>({...f,grupoDestino:e.target.value}))}
+                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                <option value="">-- Selecionar --</option>
+                {["A","B","C","D","E"].map(g=><option key={g} value={g}>Grupo {g}</option>)}
+                {escalasDoMes.filter(e=>e.id!==escalaAtual.id).map(e=><option key={e.id} value={"ESC:"+e.id}>{e.nome}</option>)}
+              </select>
+            </div>
+            <Input label="Data início" type="date" value={formAdit.dataInicio} onChange={e=>setFormAdit(f=>({...f,dataInicio:e.target.value}))}/>
+            <Input label="Data fim" type="date" value={formAdit.dataFim} onChange={e=>setFormAdit(f=>({...f,dataFim:e.target.value}))}/>
+          </div>
+          <Input label="Motivo" value={formAdit.motivo} onChange={e=>setFormAdit(f=>({...f,motivo:e.target.value}))} placeholder="Ex: Reforço de efetivo"/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <Btn variant="secondary" onClick={()=>setModalAddAdit(false)}>Cancelar</Btn>
+            <Btn onClick={()=>registrarAditamento(escalaAtual.id)}>✓ Registrar</Btn>
           </div>
         </Modal>
       )}
@@ -4637,6 +4932,8 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
             <button onClick={imprimirEscala} style={{background:"#1e3a5f",color:"#fff",border:"none",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>🖨️ Imprimir</button>
             <button onClick={()=>{setFormEscala({nome:escalaAtual.nome,tipo:escalaAtual.tipo,horaInicio:escalaAtual.horaInicio||"06:30",horaFim:escalaAtual.horaFim||"18:30",horaInicio2:escalaAtual.horaInicio2||"18:30",horaFim2:escalaAtual.horaFim2||"06:30"});setEditandoEscala(escalaAtual);}}
               style={{background:"#f0f4ff",color:"#1e3a5f",border:"1px solid #c7d7f9",borderRadius:5,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600}}>✏️ Editar</button>
+            <button onClick={()=>setModalPermutas(true)} style={{background:"#fffbeb",color:"#92400e",border:"1px solid #fde68a",borderRadius:5,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600}}>🔄 Permutas {(escalaAtual.permutas||[]).length>0&&<span style={{background:"#d97706",color:"#fff",borderRadius:999,padding:"0 5px",fontSize:9,marginLeft:3}}>{(escalaAtual.permutas||[]).length}</span>}</button>
+            <button onClick={()=>setModalAditamentos(true)} style={{background:"#ecfeff",color:"#0e7490",border:"1px solid #a5f3fc",borderRadius:5,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600}}>📋 Aditamentos {(escalaAtual.aditamentos||[]).length>0&&<span style={{background:"#0891b2",color:"#fff",borderRadius:999,padding:"0 5px",fontSize:9,marginLeft:3}}>{(escalaAtual.aditamentos||[]).length}</span>}</button>
             <button onClick={()=>setConfirmDel(escalaAtual)} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"4px 8px",color:"#dc2626",cursor:"pointer",fontSize:11}}>🗑</button>
           </div>
         )}
@@ -4799,16 +5096,20 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                           const horasHE=extrasAtivas.filter(e=>e.tipo==="HE").reduce((s,e)=>s+((e.dias||[]).filter(d=>(d.policiais||[]).includes(pid)).reduce((ss,d)=>ss+calcHorasExtra(d.horaInicio,d.horaFim),0)),0);
                           return (
                             <tr key={pid}>
-                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}</td>
+                              <td style={{...tdS,textAlign:"left",padding:"3px 6px",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                {o.grau} {o.nome.toUpperCase()} {cleanMat(o.matricula)}
+                                {escalaAtual.tipo==="livre"&&<button onClick={()=>{setLivreDias([]);setLivreLeg("C8");setModalLivre({pid,escalaId:escalaAtual.id});}} style={{marginLeft:4,background:"#1e3a5f",border:"none",borderRadius:3,color:"#fff",fontSize:8,padding:"1px 4px",cursor:"pointer",verticalAlign:"middle"}}>📅</button>}
+                              </td>
                               <td style={{...tdS,textAlign:"left",padding:"3px 6px",color:"#6b7280",fontSize:9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(escalaAtual.grupos.find(x=>x.id===g.id)?.funcoes||{})[pid]||o.cargo||""}</td>
                               {dias.map(d=>{
                                 const{leg,fromAfast}=getEffectiveLeg(pid,d,escalaAtual.celulas);
                                 const extDia=calcExtrasParaDia(pid,d);
+                                const isPermuta=(escalaAtual.permutas||[]).some(p=>(p.pid1===pid||p.pid2===pid)&&p.dia===d);
                                 const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;
                                 return renderCell(leg,extDia,isH,isW,
                                   ()=>{if(!fromAfast){setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg((escalaAtual.celulas||{})[pid+"_"+d]||"");}},
                                   (eid)=>onGoExtra&&onGoExtra(eid),
-                                  fromAfast
+                                  fromAfast, isPermuta
                                 );
                               })}
                               <td style={{...tdS,fontWeight:700,background:"#f0f4ff"}}>{noturno||""}</td>
