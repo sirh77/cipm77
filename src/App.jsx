@@ -4147,7 +4147,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
   const [livreLeg, setLivreLeg]               = useState("C8");
   const [modalPermutas, setModalPermutas]     = useState(false);
   const [modalAddPermuta, setModalAddPermuta] = useState(false);
-  const [formPermuta, setFormPermuta]         = useState({dia:1, pid1:"", pid2:"", motivo:""});
+  const [formPermuta, setFormPermuta]         = useState({diaA:1, pid1:"", diaB:1, pid2:"", motivo:""});
   const [modalAditamentos, setModalAditamentos] = useState(false);
   const [modalAddAdit, setModalAddAdit]         = useState(false);
   const [formAdit, setFormAdit] = useState({policialId:"",numAdit:"",motivo:"",dataInicio:"",dataFim:"",grupoOrigem:"",grupoDestino:""});
@@ -4273,18 +4273,43 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
 
   function registrarPermuta(eid) {
     const e = escalaAtual; if(!e) return;
-    const{dia,pid1,pid2,motivo}=formPermuta;
-    if(!pid1||!pid2||pid1===pid2){alert("Selecione dois policiais diferentes.");return;}
-    const leg1=(e.celulas||{})[pid1+"_"+dia]||"";
-    const leg2=(e.celulas||{})[pid2+"_"+dia]||"";
-    const nova={id:Date.now(),dia,pid1,pid2,leg1,leg2,motivo,dataRegistro:new Date().toISOString().slice(0,10)};
+    const{diaA,pid1,diaB,pid2,motivo}=formPermuta;
+    if(!pid1||!pid2||Number(pid1)===Number(pid2)){alert("Selecione dois policiais diferentes.");return;}
+    // leg1 = serviço original de pid1 no diaA (que ele cede para pid2)
+    // leg2 = serviço original de pid2 no diaB (que ele cede para pid1)
+    const leg1=(e.celulas||{})[Number(pid1)+"_"+diaA]||"";
+    const leg2=(e.celulas||{})[Number(pid2)+"_"+diaB]||"";
+    const nova={
+      id:Date.now(),
+      pid1:Number(pid1), diaA, leg1,  // pid1 cede diaA → pid2 vai trabalhar diaA
+      pid2:Number(pid2), diaB, leg2,  // pid2 cede diaB → pid1 vai trabalhar diaB
+      motivo, dataRegistro:new Date().toISOString().slice(0,10)
+    };
+    // NÃO modificar celulas — a exibição é controlada pelo registro de permuta
     setEscalas(es=>es.map(esc=>esc.id!==eid?esc:{
       ...esc,
-      celulas:{...(esc.celulas||{}),[pid1+"_"+dia]:leg2,[pid2+"_"+dia]:leg1},
       permutas:[...(esc.permutas||[]),nova]
     }));
-    setFormPermuta({dia:1,pid1:"",pid2:"",motivo:""});
+    setFormPermuta({diaA:1,pid1:"",diaB:1,pid2:"",motivo:""});
     setModalAddPermuta(false);
+  }
+
+  // Retorna a exibição correta de uma célula considerando permutas
+  function getPermutaCell(pid, dia, celulas, permutas) {
+    const perm=(permutas||[]).find(p=>
+      (p.pid1===pid&&(p.diaA===dia||p.diaB===dia))||
+      (p.pid2===pid&&(p.diaA===dia||p.diaB===dia))
+    );
+    if(!perm) return{leg:(celulas||{})[pid+"_"+dia]||"",isPermuta:false,isGiven:false};
+    if(pid===perm.pid1){
+      if(dia===perm.diaA) return{leg:"",isPermuta:true,isGiven:true,perm};     // cedeu este dia
+      if(dia===perm.diaB) return{leg:perm.leg2,isPermuta:true,isGiven:false,perm}; // trabalha no lugar de pid2
+    }
+    if(pid===perm.pid2){
+      if(dia===perm.diaB) return{leg:"",isPermuta:true,isGiven:true,perm};     // cedeu este dia
+      if(dia===perm.diaA) return{leg:perm.leg1,isPermuta:true,isGiven:false,perm}; // trabalha no lugar de pid1
+    }
+    return{leg:(celulas||{})[pid+"_"+dia]||"",isPermuta:false,isGiven:false};
   }
 
   function registrarAditamento(eid) {
@@ -4311,7 +4336,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
       html+=`<table><thead><tr><th>#</th><th>Dia</th><th>Policial A (cede)</th><th>Serv. A</th><th>Policial B (recebe)</th><th>Serv. B</th><th>Motivo</th><th>Registrado em</th></tr></thead><tbody>`;
       perms.forEach((p,i)=>{
         const o1=officers.find(x=>x.id===p.pid1), o2=officers.find(x=>x.id===p.pid2);
-        html+=`<tr><td>${i+1}</td><td>Dia ${p.dia}/${mes}</td><td>${o1?o1.grau+" "+o1.nome:"?"}</td><td>${p.leg1||"—"}</td><td>${o2?o2.grau+" "+o2.nome:"?"}</td><td>${p.leg2||"—"}</td><td>${p.motivo||"—"}</td><td>${p.dataRegistro||"—"}</td></tr>`;
+        html+=`<tr><td>${i+1}</td><td>Dia ${p.diaA}/${mes} (A→B)<br>Dia ${p.diaB}/${mes} (B→A)</td><td>${o1?o1.grau+" "+o1.nome:"?"}</td><td>${p.leg1||"—"}</td><td>${o2?o2.grau+" "+o2.nome:"?"}</td><td>${p.leg2||"—"}</td><td>${p.motivo||"—"}</td><td>${p.dataRegistro||"—"}</td></tr>`;
       });
       html+=`</tbody></table>`;
     } else { html+=`<p style='text-align:center;color:#999;'>Nenhuma permuta registrada.</p>`; }
@@ -4595,8 +4620,13 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                       <div key={p.id} style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7,padding:"8px 12px"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                           <div>
-                            <span style={{fontWeight:700,color:"#92400e"}}>Dia {p.dia}/{mes}</span>
-                            <div style={{fontSize:12,marginTop:3}}><strong>{o1?o1.grau+" "+o1.nome:"?"}</strong> ({p.leg1||"sem serv."}) ⇄ <strong>{o2?o2.grau+" "+o2.nome:"?"}</strong> ({p.leg2||"sem serv."})</div>
+                            <span style={{fontWeight:700,color:"#92400e"}}>Dia {p.diaA}/{mes} e Dia {p.diaB}/{mes}</span>
+                            <div style={{fontSize:12,marginTop:3}}>
+                              <strong>{o1?o1.grau+" "+o1.nome:"?"}</strong> cede Dia {p.diaA} ({p.leg1||"folga"}) e trabalha Dia {p.diaB}
+                            </div>
+                            <div style={{fontSize:12}}>
+                              <strong>{o2?o2.grau+" "+o2.nome:"?"}</strong> cede Dia {p.diaB} ({p.leg2||"folga"}) e trabalha Dia {p.diaA}
+                            </div>
                             {p.motivo&&<div style={{fontSize:11,color:"#6b7280",marginTop:2}}>Motivo: {p.motivo}</div>}
                             <div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>Registrado em: {p.dataRegistro}</div>
                           </div>
@@ -4604,7 +4634,7 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                             // Reverter permuta
                             setEscalas(es=>es.map(esc=>esc.id!==escalaAtual.id?esc:{
                               ...esc,
-                              celulas:{...(esc.celulas||{}),[p.pid1+"_"+p.dia]:p.leg1,[p.pid2+"_"+p.dia]:p.leg2},
+                              celulas:{...(esc.celulas||{}),[p.pid1+"_"+p.diaA]:p.leg1,[p.pid2+"_"+p.diaB]:p.leg2},
                               permutas:(esc.permutas||[]).filter(x=>x.id!==p.id)
                             }));
                           }} style={{background:"#fee2e2",border:"none",borderRadius:5,padding:"3px 8px",color:"#dc2626",cursor:"pointer",fontSize:11,flexShrink:0}}>✕ Reverter</button>
@@ -4622,32 +4652,44 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
 
       {/* Modal adicionar nova permuta */}
       {modalAddPermuta&&escalaAtual&&(()=>{
-        const todosMembros=escalaAtual.grupos.flatMap(g=>(g.membros||[]).map(pid=>({pid,grupo:g.id,leg:(escalaAtual.celulas||{})[pid+"_"+formPermuta.dia]||""})));
+        const todosMembros=escalaAtual.grupos.flatMap(g=>(g.membros||[]).map(pid=>({pid,grupo:g.id})));
+        const legA=formPermuta.pid1?((escalaAtual.celulas||{})[Number(formPermuta.pid1)+"_"+formPermuta.diaA]||"folga"):"";
+        const legB=formPermuta.pid2?((escalaAtual.celulas||{})[Number(formPermuta.pid2)+"_"+formPermuta.diaB]||"folga"):"";
         return(
-          <Modal title="Registrar permuta" onClose={()=>setModalAddPermuta(false)}>
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Dia da permuta</div>
-              <select value={formPermuta.dia} onChange={e=>setFormPermuta(f=>({...f,dia:Number(e.target.value)}))}
-                style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
-                {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=><option key={d} value={d}>Dia {d}/{mes}</option>)}
-              </select>
+          <Modal title="Registrar permuta" onClose={()=>setModalAddPermuta(false)} wide>
+            <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7,padding:"8px 12px",marginBottom:10,fontSize:11,color:"#92400e"}}>
+              💡 Policial A cede o serviço do <strong>Dia A</strong> e passa a trabalhar no <strong>Dia B</strong> (no lugar de B). Policial B cede o serviço do <strong>Dia B</strong> e passa a trabalhar no <strong>Dia A</strong> (no lugar de A).
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Policial A (cede o serviço)</div>
+              <div style={{border:"1px solid #e5e7eb",borderRadius:7,padding:10}}>
+                <div style={{fontWeight:700,fontSize:12,marginBottom:6,color:"#1e3a5f"}}>Policial A</div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Selecionar policial</div>
                 <select value={formPermuta.pid1} onChange={e=>setFormPermuta(f=>({...f,pid1:Number(e.target.value)}))}
-                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11}}>
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11,marginBottom:8}}>
                   <option value="">-- Selecionar --</option>
-                  {todosMembros.map(({pid,grupo,leg})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")} ({leg||"folga"})</option>:null;})}
+                  {todosMembros.map(({pid,grupo})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")}</option>:null;})}
                 </select>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Dia A (cede este serviço)</div>
+                <select value={formPermuta.diaA} onChange={e=>setFormPermuta(f=>({...f,diaA:Number(e.target.value)}))}
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                  {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=><option key={d} value={d}>Dia {d}/{mes}</option>)}
+                </select>
+                {formPermuta.pid1&&<div style={{fontSize:11,color:"#6b7280",marginTop:4}}>Serviço cedido: <strong>{legA}</strong></div>}
               </div>
-              <div>
-                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Policial B (recebe o serviço)</div>
+              <div style={{border:"1px solid #e5e7eb",borderRadius:7,padding:10}}>
+                <div style={{fontWeight:700,fontSize:12,marginBottom:6,color:"#1e3a5f"}}>Policial B</div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Selecionar policial</div>
                 <select value={formPermuta.pid2} onChange={e=>setFormPermuta(f=>({...f,pid2:Number(e.target.value)}))}
-                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11}}>
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:11,marginBottom:8}}>
                   <option value="">-- Selecionar --</option>
-                  {todosMembros.filter(x=>x.pid!==formPermuta.pid1).map(({pid,grupo,leg})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")} ({leg||"folga"})</option>:null;})}
+                  {todosMembros.filter(x=>x.pid!==formPermuta.pid1).map(({pid,grupo})=>{const o=officers.find(x=>x.id===pid);return o?<option key={pid} value={pid}>{grupo}: {o.grau} {o.nome.split(" ").slice(0,2).join(" ")}</option>:null;})}
                 </select>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>Dia B (cede este serviço)</div>
+                <select value={formPermuta.diaB} onChange={e=>setFormPermuta(f=>({...f,diaB:Number(e.target.value)}))}
+                  style={{width:"100%",padding:"7px 8px",border:"1px solid #d1d5db",borderRadius:7,fontSize:12}}>
+                  {Array.from({length:diasNoMes},(_,i)=>i+1).map(d=><option key={d} value={d}>Dia {d}/{mes}</option>)}
+                </select>
+                {formPermuta.pid2&&<div style={{fontSize:11,color:"#6b7280",marginTop:4}}>Serviço cedido: <strong>{legB}</strong></div>}
               </div>
             </div>
             <Input label="Motivo (opcional)" value={formPermuta.motivo} onChange={e=>setFormPermuta(f=>({...f,motivo:e.target.value}))} placeholder="Ex: Compromisso pessoal"/>
@@ -5102,14 +5144,36 @@ function AbaEscala({ pelotao, escalas, setEscalas, officers, mes, ano, escExtras
                               </td>
                               <td style={{...tdS,textAlign:"left",padding:"3px 6px",color:"#6b7280",fontSize:9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(escalaAtual.grupos.find(x=>x.id===g.id)?.funcoes||{})[pid]||o.cargo||""}</td>
                               {dias.map(d=>{
-                                const{leg,fromAfast}=getEffectiveLeg(pid,d,escalaAtual.celulas);
+                                // Permutas têm prioridade — verificar primeiro
+                                const permCell=getPermutaCell(pid,d,escalaAtual.celulas,escalaAtual.permutas);
+                                // Se não tem permuta, verificar afastamento
+                                const{leg:legAfast,fromAfast}=permCell.isPermuta?{leg:null,fromAfast:false}:getEffectiveLeg(pid,d,escalaAtual.celulas);
                                 const extDia=calcExtrasParaDia(pid,d);
-                                const isPermuta=(escalaAtual.permutas||[]).some(p=>(p.pid1===pid||p.pid2===pid)&&p.dia===d);
                                 const ds=DS[(pDia+d-1)%7];const isW=ds==="Sab"||ds==="Dom";const isH=isCurrentMonth&&d===diaHoje;
-                                return renderCell(leg,extDia,isH,isW,
+
+                                // Dia CEDIDO (policial não vai trabalhar): mostrar só "P" em laranja
+                                if(permCell.isPermuta&&permCell.isGiven){
+                                  return <td key={d} style={{...tdS,background:"#fffbeb",cursor:"default",border:"2px solid #d97706",position:"relative"}}>
+                                    <div style={{fontWeight:700,color:"#d97706",fontSize:11,textAlign:"center"}}>P</div>
+                                    <div style={{fontSize:7,color:"#d97706",textAlign:"center",lineHeight:1}}>cedeu</div>
+                                  </td>;
+                                }
+                                // Dia RECEBIDO via permuta (policial vai trabalhar no lugar do outro): legenda + P pequeno
+                                if(permCell.isPermuta&&!permCell.isGiven){
+                                  const legP=permCell.leg;
+                                  const bgP=legP?(legP==="F"?"#dbeafe":legP==="JMS"||legP==="AT"?"#fee2e2":"#dcfce7"):"#fffbeb";
+                                  return <td key={d} style={{...tdS,background:bgP,border:"2px solid #d97706",position:"relative",cursor:"pointer"}}
+                                    onClick={()=>{setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg(legP||"");}}>
+                                    <div style={{position:"absolute",top:1,right:1,fontSize:6,fontWeight:700,color:"#d97706",lineHeight:1}}>P</div>
+                                    <div style={{fontWeight:700,color:"#1e3a5f",fontSize:10,textAlign:"center"}}>{legP||""}</div>
+                                  </td>;
+                                }
+                                // Célula normal (com possível afastamento)
+                                const legFinal=fromAfast?legAfast:permCell.leg;
+                                return renderCell(legFinal,extDia,isH,isW,
                                   ()=>{if(!fromAfast){setEditCell({escalaId:escalaAtual.id,grupoId:g.id,pid,dia:d});setEditLeg((escalaAtual.celulas||{})[pid+"_"+d]||"");}},
                                   (eid)=>onGoExtra&&onGoExtra(eid),
-                                  fromAfast, isPermuta
+                                  fromAfast, false
                                 );
                               })}
                               <td style={{...tdS,fontWeight:700,background:"#f0f4ff"}}>{noturno||""}</td>
