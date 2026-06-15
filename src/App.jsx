@@ -6430,6 +6430,85 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
   }
 
 
+  function gerarExcelCET() {
+    // Importação dinâmica do SheetJS para não aumentar o bundle inicial
+    import('xlsx').then(XLSX => {
+      const wb = XLSX.utils.book_new();
+      const hoje2 = new Date();
+      const GRAUS_ORD = ["CEL PM","TC PM","MAJ PM","CAP PM","1º TEN PM","2º TEN PM","ASP PM","ST PM","1º SGT PM","2º SGT PM","3º SGT PM","CB PM","SD 1ª CL PM","SD PM"];
+
+      function sortCET(lista) {
+        return [...lista]
+          .map(v=>({v, o:getOfficer(v.policialId)}))
+          .filter(({o})=>!!o)
+          .sort((a,b)=>{
+            const ia=GRAUS_ORD.indexOf(a.o.grau); const ib=GRAUS_ORD.indexOf(b.o.grau);
+            if(ia!==ib) return (ia===-1?99:ia)-(ib===-1?99:ib);
+            return a.o.nome.localeCompare(b.o.nome,"pt-BR");
+          });
+      }
+
+      function buildSheet(lista, titulo) {
+        const sorted = sortCET(lista);
+        const headerTitle = [titulo];
+        const headerSub = ["Nº","GRADUAÇÃO","NOME DO CONDUTOR","MATRÍCULA","CNH","CATEGORIA","VALIDADE"];
+        const rows = sorted.map(({v,o},idx)=>[
+          idx+1,
+          o.grau,
+          o.nome.toUpperCase(),
+          cleanMat(o.matricula),
+          o.cnh||"—",
+          o.cnhCategoria||"—",
+          o.cnhValidade ? new Date(o.cnhValidade+"T12:00:00").toLocaleDateString("pt-BR") : "—"
+        ]);
+
+        const wsData = [
+          ["POLÍCIA MILITAR DA BAHIA — 77ª COMPANHIA INDEPENDENTE DE POLÍCIA MILITAR"],
+          [headerTitle[0]],
+          [],
+          headerSub,
+          ...rows
+        ];
+
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+        // Larguras das colunas
+        ws["!cols"] = [
+          {wch:5},   // Nº
+          {wch:16},  // Graduação
+          {wch:36},  // Nome
+          {wch:16},  // Matrícula
+          {wch:14},  // CNH
+          {wch:12},  // Categoria
+          {wch:14},  // Validade
+        ];
+
+        // Mesclar título principal (A1:G1) e subtítulo (A2:G2)
+        ws["!merges"] = [
+          {s:{r:0,c:0},e:{r:0,c:6}},
+          {s:{r:1,c:0},e:{r:1,c:6}},
+        ];
+
+        return ws;
+      }
+
+      // Aba 1 — CET 4 Rodas
+      const ws4 = buildSheet(cet4, "MAPA DE CONDUTORES DE VEÍCULOS QUATRO RODAS");
+      XLSX.utils.book_append_sheet(wb, ws4, "CET 4 RODAS");
+
+      // Aba 2 — CET 2 Rodas
+      const ws2 = buildSheet(cet2, "MAPA DE CONDUTORES DE VEÍCULOS DUAS RODAS");
+      XLSX.utils.book_append_sheet(wb, ws2, "CET 2 RODAS");
+
+      // Gerar e baixar
+      const nomearq = `CET_${hoje2.toLocaleDateString("pt-BR").replace(/\//g,"-")}.xlsx`;
+      XLSX.writeFile(wb, nomearq);
+    }).catch(err=>{
+      console.error("Erro ao gerar Excel:", err);
+      alert("Erro ao gerar o arquivo Excel. Tente novamente.");
+    });
+  }
+
   function gerarRelVantagens() {
     const agora = new Date();
     const emit = loggedUser ? (loggedUser.grau||"") + " " + (loggedUser.nome||"") + ", Matrícula " + cleanMat(loggedUser.matricula||"") : "Sistema";
@@ -6547,7 +6626,8 @@ function ModVantagens({ officers, vantagens, setVantagens, loggedUser }) {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <h2 style={{fontSize:18,fontWeight:700,color:"#111827",margin:0}}>Vantagens</h2>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <Btn small variant="secondary" onClick={gerarRelVantagens}>🖨️ Relatório</Btn>
+          <Btn small variant="secondary" onClick={gerarRelVantagens}>🖨️ Relatório PDF</Btn>
+          <Btn small onClick={gerarExcelCET}>📊 Excel CET (4 e 2 Rodas)</Btn>
           <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,overflow:"hidden",border:"1px solid #e5e7eb"}}>
             <button onClick={()=>setAba("lista")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="lista"?600:400,background:aba==="lista"?"#1e3a5f":"transparent",color:aba==="lista"?"#fff":"#374151"}}>📋 Listas</button>
             <button onClick={()=>setAba("historico")} style={{padding:"7px 16px",border:"none",cursor:"pointer",fontSize:12,fontWeight:aba==="historico"?600:400,background:aba==="historico"?"#374151":"transparent",color:aba==="historico"?"#fff":"#374151"}}>🗂 Histórico</button>
