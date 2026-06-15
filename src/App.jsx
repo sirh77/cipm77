@@ -2872,10 +2872,12 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
   const hoje = new Date();
   const todayStr = hoje.toISOString().slice(0,10);
 
-  // Auto-concluir atestados passados
+  // Auto-concluir TODOS os tipos quando dataFim passa
   const afastamentosCorrigidos = useMemo(()=>
     afastamentos.map(a=>{
-      if (a.tipo==='Atestado' && !a.concluido && a.dataFim && a.dataFim < todayStr)
+      // JMS não auto-conclui por data — tem fluxo próprio de inspeção
+      if (a.tipo==='Junta Médica') return a;
+      if (!a.concluido && a.dataFim && a.dataFim < todayStr)
         return {...a, concluido:true};
       return a;
     })
@@ -2941,6 +2943,70 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
     const url = URL.createObjectURL(blob);
     const w = window.open(url,"_blank");
     if(w) w.addEventListener("load",()=>{ setTimeout(()=>{ w.print(); URL.revokeObjectURL(url); },400); });
+  }
+
+  function gerarExcelSaude() {
+    import('xlsx').then(XLSX => {
+      const cfg = relSaudeConfig;
+      const tipos = cfg.tipos.length>0 ? cfg.tipos : ["Junta Médica","Atestado","Restrição Médica","Licença Maternidade","Licença Paternidade","Licença Prêmio","Luto","Núpcias"];
+      const getO = id => officers.find(o=>o.id===id);
+      let lista = [...afastamentosCorrigidos].filter(a=>{
+        if (!tipos.includes(a.tipo)) return false;
+        if (cfg.apenasAtivos && a.concluido) return false;
+        if (cfg.ini && a.dataInicio && a.dataInicio < cfg.ini) return false;
+        if (cfg.fim && a.dataInicio && a.dataInicio > cfg.fim) return false;
+        return true;
+      }).sort((a,b)=>{
+        const oa=getO(a.policialId), ob=getO(b.policialId);
+        if (oa&&ob) { const r=rankSort(oa,ob); if(r!==0) return r; }
+        return (a.dataInicio||"").localeCompare(b.dataInicio||"");
+      });
+
+      const fmtD = v => {
+        if (!v) return "—";
+        const s = String(v);
+        if (s.includes("/")) return s;
+        try { return new Date(s+"T12:00:00").toLocaleDateString("pt-BR"); } catch { return s; }
+      };
+      const diffDias = (ini,fim) => {
+        if (!ini||!fim) return "—";
+        try {
+          const a=new Date(ini+"T12:00:00"),b=new Date(fim+"T12:00:00");
+          return Math.max(0,Math.round((b-a)/(86400000)))+1;
+        } catch { return "—"; }
+      };
+
+      const header = ["GRAU HIERÁRQUICO","NOME","MATRÍCULA","INÍCIO","FIM","QTD DIAS","CID","HOSPITAL","NOME DO MÉDICO","CRM","OBSERVAÇÃO","NOVA DATA DE INSPEÇÃO"];
+      const rows = lista.map(a=>{
+        const o = getO(a.policialId);
+        const fim = a.dataFim||a.novaInspDia||"";
+        return [
+          o?o.grau:"—",
+          o?o.nome:(a._nome||"—"),
+          o?cleanMat(o.matricula):(a._mat||"—"),
+          fmtD(a.dataInicio),
+          fmtD(fim),
+          a.tipo==="Atestado" ? (a.dias||diffDias(a.dataInicio,a.dataFim)||"—") : diffDias(a.dataInicio,fim),
+          a.cid||"—",
+          a.hospital||"—",
+          a.medico||"—",
+          a.crm||"—",
+          a.restricao||a.parecer||a.descricao||"—",
+          a.novaInspDia ? fmtD(a.novaInspDia) : "—"
+        ];
+      });
+
+      const wsData = [header,...rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      ws["!cols"] = [
+        {wch:18},{wch:36},{wch:16},{wch:12},{wch:12},{wch:10},
+        {wch:10},{wch:20},{wch:24},{wch:14},{wch:30},{wch:16}
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Saúde e Afastamentos");
+      const nomearq = `Saude_77CIPM_${new Date().toLocaleDateString("pt-BR").replace(/\//g,"-")}.xlsx`;
+      XLSX.writeFile(wb, nomearq);
+    }).catch(()=>alert("Erro ao gerar Excel."));
   }
 
   function gerarRelSaude(modo, officerFiltro) {
@@ -3258,7 +3324,8 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
             <Btn variant="secondary" onClick={()=>setModalRelSaude(false)}>Cancelar</Btn>
-            <Btn onClick={()=>gerarRelSaude("modal", relOfficer||null)}>📋 Gerar relatório</Btn>
+            <Btn variant="secondary" onClick={()=>{gerarExcelSaude();setModalRelSaude(false);}}>📊 Excel</Btn>
+            <Btn onClick={()=>gerarRelSaude("modal", relOfficer||null)}>📋 Gerar PDF</Btn>
           </div>
         </Modal>
       )}
@@ -3266,7 +3333,8 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <h2 style={{fontSize:18,fontWeight:700,margin:0}}>Saúde / Afastamentos</h2>
         <div style={{display:"flex",gap:8}}>
-          <Btn small variant="secondary" onClick={()=>{setRelOfficer(null);setModalRelSaude(true);}}>📋 Relatório</Btn>
+          <Btn small variant="secondary" onClick={()=>{setRelOfficer(null);setModalRelSaude(true);}}>📋 Relatório PDF</Btn>
+          <Btn small onClick={gerarExcelSaude}>📊 Excel</Btn>
           <Btn onClick={()=>{setForm({policialId:"",tipo:"Atestado",dataInicio:"",aContarDe:"",afastamento:"",dataFim:"",novaInspDia:"",parecer:"",restricao:"",cid:"",medico:"",hospital:"",crm:"",descricao:"",concluido:false,dataCasamento:"",nomeConjuge:"",nomeFilho:"",dataNascFilho:"",certidaoNasc:"",cpfFilho:"",parentesco:"",nomeFalecido:"",dataObito:"",registroObito:""});setModal({mode:"new"});}}>+ Registrar</Btn>
         </div>
       </div>
@@ -6672,19 +6740,21 @@ function ModExportar({ officers }) {
 
   function exportarCSV() {
     const header = [
-      "ORD","G.H.","NOME","NOME DE GUERRA","MATRICULA","UNIDADE","LOCAL DE TRABALHO",
+      "ORD","G.H.","NOME","NOME DE GUERRA","MATRICULA","LOCAL DE TRABALHO",
       "DATA NASC","CPF","RG","ADMISSAO","PLANO DE SAUDE","GRAU DE INSTRUCAO",
-      "DDD","TELEFONE","TIPO SANG","EMAIL","ENDERECO","SITUACAO","SEXO","OBSERVACAO"
+      "DDD","TELEFONE","TIPO SANG","EMAIL","ENDERECO","SITUACAO"
     ];
-    const sorted = [...officers].sort(rankSort);
+    // Excluir transferidos e inativos
+    const sorted = [...officers]
+      .filter(o=>!["Transferido","Reserva/Inativo"].includes(o.situacao||"Ativo"))
+      .sort(rankSort);
     const rows = sorted.map((o,i)=>[
       i+1, o.grau||"", o.nome||"", o.nomeGuerra||"", cleanMat(o.matricula),
-      o.origem||"SEDE", o.localTrabalho||"",
+      o.localTrabalho||"",
       o.dataNasc||"", o.cpf||"", o.rg||"", o.admissao||"",
       o.planoSaude||"", o.grauInstrucao||"",
       o.ddd||"", o.telefone||"", o.tipoSang||"",
-      o.email||"", o.endereco||"", o.situacao||"Ativo",
-      o.sexo||"MASC", o.observacao||""
+      o.email||"", o.endereco||"", o.situacao||"Ativo"
     ]);
     const esc = v => {
       const s = String(v == null ? "" : v).replace(/[\r\n]+/g," ");
