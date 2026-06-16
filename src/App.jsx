@@ -2908,6 +2908,16 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
   const [relSaudeConfig, setRelSaudeConfig] = useState({tipos:["Junta Médica","Atestado","Restrição Médica"],apenasAtivos:true,ini:"",fim:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
+  // CEVAP
+  const CEVAP_INICIAL = [
+    {id:1,grau:"MAJ PM",nome:"KESSIANE FLORENTINA DE SOUZA GONCALVES",mat:"30.397.294",crm:"CRM-BA 32.954"},
+    {id:2,grau:"CAP PM",nome:"WELLEN GONSALVES OLIVEIRA DE CARVALHO",mat:"30.507.751-8",crm:"CRM-BA 36.416"},
+  ];
+  const [medicosCevap, setMedicosCevap] = useSupabaseState("sirh_medicos_cevap", CEVAP_INICIAL);
+  const [isCevap, setIsCevap] = useState(false);
+  const [medicosCevapModal, setMedicosCevapModal] = useState(false);
+  const [novoMedicoCevap, setNovoMedicoCevap] = useState({grau:"",nome:"",mat:"",crm:""});
+
 
   // ── Helpers de relatório (padrão A4) ─────────────────────────────────────
   // CSS padrão A4 para relatórios
@@ -3148,10 +3158,49 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
     return diff>=0&&diff<=15;
   });
 
+  // Inspeções ATRASADAS (JMS com novaInspDia < hoje e não concluído)
+  const jmsAtrasadas = afastamentosCorrigidos.filter(a=>{
+    if (a.tipo!=="Junta Médica"||a.concluido||!a.novaInspDia) return false;
+    const diff=(new Date(a.novaInspDia+"T12:00:00")-hoje)/(24*3600*1000);
+    return diff<0;
+  });
+
   return (
     <div>
+      {/* Modal gerenciar médicos CEVAP */}
+      {medicosCevapModal && (
+        <Modal title="⚙️ Médicos CEVAP" onClose={()=>{setMedicosCevapModal(false);setNovoMedicoCevap({grau:"",nome:"",mat:"",crm:""});}}>
+          <div style={{maxHeight:"50vh",overflowY:"auto",marginBottom:12}}>
+            {medicosCevap.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",border:"1px solid #e5e7eb",borderRadius:8,marginBottom:6,background:"#f9fafb"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600}}>{m.grau} {m.nome}</div>
+                  <div style={{fontSize:11,color:"#6b7280"}}>Mat: {m.mat} · {m.crm}</div>
+                </div>
+                <button onClick={()=>setMedicosCevap(ms=>ms.filter(x=>x.id!==m.id))}
+                  style={{background:"#fee2e2",border:"none",color:"#dc2626",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:13}}>🗑</button>
+              </div>
+            ))}
+          </div>
+          <div style={{borderTop:"1px solid #e5e7eb",paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Adicionar médico</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <Input label="Grau" value={novoMedicoCevap.grau} onChange={e=>setNovoMedicoCevap(x=>({...x,grau:e.target.value}))} placeholder="CAP PM"/>
+              <Input label="Nome completo" value={novoMedicoCevap.nome} onChange={e=>setNovoMedicoCevap(x=>({...x,nome:e.target.value}))}/>
+              <Input label="Matrícula" value={novoMedicoCevap.mat} onChange={e=>setNovoMedicoCevap(x=>({...x,mat:e.target.value}))}/>
+              <Input label="CRM" value={novoMedicoCevap.crm} onChange={e=>setNovoMedicoCevap(x=>({...x,crm:e.target.value}))} placeholder="CRM-BA 00000"/>
+            </div>
+            <Btn onClick={()=>{
+              if(!novoMedicoCevap.nome.trim()){alert("Nome obrigatório.");return;}
+              setMedicosCevap(ms=>[...ms,{...novoMedicoCevap,id:Date.now()}]);
+              setNovoMedicoCevap({grau:"",nome:"",mat:"",crm:""});
+            }}>+ Adicionar médico</Btn>
+          </div>
+        </Modal>
+      )}
+
       {modal && (
-        <Modal title={modal.edit?"Editar registro":"Novo registro de saúde"} onClose={()=>setModal(null)} wide>
+        <Modal title={modal.edit?"Editar registro":"Novo registro de saúde"} onClose={()=>{setModal(null);setIsCevap(false);}} wide>
           {!form.policialId ? (
             <div style={{marginBottom:12}}>
               <label style={{display:"block",fontSize:12,color:"#374151",fontWeight:500,marginBottom:4}}>Policial *</label>
@@ -3195,6 +3244,50 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
                 <option value="APTO PARA O SERVIÇO PM">🟢 APTO PARA O SERVIÇO PM</option>
               </Select>
               <Textarea label="Restrições" value={form.restricao||""} onChange={e=>set("restricao",e.target.value)} rows={2}/>
+
+              {/* CEVAP toggle para JMS */}
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"#f0f4ff",borderRadius:8,border:"1px solid #c7d2fe"}}>
+                <input type="checkbox" id="cevapCheckJms" checked={isCevap}
+                  onChange={e=>{
+                    const v=e.target.checked;
+                    setIsCevap(v);
+                    if(v){set("hospital","CEVAP");set("medico","");set("crm","");}
+                    else{set("hospital","");set("medico","");set("crm","");}
+                  }}
+                  style={{width:16,height:16,cursor:"pointer",accentColor:"#4f46e5"}}/>
+                <label htmlFor="cevapCheckJms" style={{fontSize:13,fontWeight:600,color:"#4f46e5",cursor:"pointer"}}>
+                  Junta realizada pelo CEVAP
+                </label>
+                {isCevap && (
+                  <button onClick={()=>setMedicosCevapModal(true)}
+                    style={{marginLeft:"auto",fontSize:11,background:"none",border:"1px solid #6366f1",color:"#4f46e5",borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>
+                    ⚙️ Gerenciar médicos
+                  </button>
+                )}
+              </div>
+              {isCevap ? (
+                <>
+                  <label style={{fontSize:12,color:"#374151",fontWeight:500}}>Médico CEVAP *</label>
+                  <div style={{display:"grid",gap:6}}>
+                    {medicosCevap.map(m=>(
+                      <label key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",border:`2px solid ${form.medico===m.grau+" "+m.nome?"#4f46e5":"#e5e7eb"}`,borderRadius:8,cursor:"pointer",background:form.medico===m.grau+" "+m.nome?"#eef2ff":"#fff"}}>
+                        <input type="radio" name="medicoCevapJms" checked={form.medico===m.grau+" "+m.nome}
+                          onChange={()=>{set("medico",m.grau+" "+m.nome);set("crm",m.crm);set("hospital","CEVAP");}}
+                          style={{accentColor:"#4f46e5"}}/>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1e3a5f"}}>{m.grau} {m.nome}</div>
+                          <div style={{fontSize:11,color:"#6b7280"}}>Matrícula: {m.mat} · {m.crm}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <Input label="Médico responsável (opcional)" value={form.medico||""} onChange={e=>set("medico",e.target.value)}/>
+                  <Input label="CRM (opcional)" value={form.crm||""} onChange={e=>set("crm",e.target.value)}/>
+                </div>
+              )}
             </>
           )}
 
@@ -3205,11 +3298,59 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
                 <Input label="CID" value={form.cid||""} onChange={e=>set("cid",e.target.value)} placeholder="Ex: M54.5"/>
                 <Input label="Dias" type="number" value={form.dias||""} onChange={e=>{set("dias",e.target.value);set("dataFim",calcDataFim("Atestado",form.dataInicio,e.target.value));}}/>
               </div>
-              <Input label="Nome do médico" value={form.medico||""} onChange={e=>set("medico",e.target.value)}/>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <Input label="Hospital/Unidade" value={form.hospital||""} onChange={e=>set("hospital",e.target.value)}/>
-                <Input label="CRM/CRO" value={form.crm||""} onChange={e=>set("crm",e.target.value)}/>
+
+              {/* CEVAP toggle */}
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"#f0f4ff",borderRadius:8,border:"1px solid #c7d2fe"}}>
+                <input type="checkbox" id="cevapCheck" checked={isCevap}
+                  onChange={e=>{
+                    const v=e.target.checked;
+                    setIsCevap(v);
+                    if(v){set("hospital","CEVAP");set("medico","");set("crm","");}
+                    else{set("hospital","");set("medico","");set("crm","");}
+                  }}
+                  style={{width:16,height:16,cursor:"pointer",accentColor:"#4f46e5"}}/>
+                <label htmlFor="cevapCheck" style={{fontSize:13,fontWeight:600,color:"#4f46e5",cursor:"pointer"}}>
+                  Atestado do CEVAP
+                </label>
+                {isCevap && (
+                  <button onClick={()=>setMedicosCevapModal(true)}
+                    style={{marginLeft:"auto",fontSize:11,background:"none",border:"1px solid #6366f1",color:"#4f46e5",borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>
+                    ⚙️ Gerenciar médicos
+                  </button>
+                )}
               </div>
+
+              {/* Seleção de médico CEVAP */}
+              {isCevap ? (
+                <>
+                  <label style={{fontSize:12,color:"#374151",fontWeight:500}}>Médico CEVAP *</label>
+                  <div style={{display:"grid",gap:6}}>
+                    {medicosCevap.map(m=>(
+                      <label key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",border:`2px solid ${form.medico===m.nome?"#4f46e5":"#e5e7eb"}`,borderRadius:8,cursor:"pointer",background:form.medico===m.nome?"#eef2ff":"#fff"}}>
+                        <input type="radio" name="medicoCevap" checked={form.medico===m.nome}
+                          onChange={()=>{set("medico",m.grau+" "+m.nome);set("crm",m.crm);set("hospital","CEVAP");}}
+                          style={{accentColor:"#4f46e5"}}/>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1e3a5f"}}>{m.grau} {m.nome}</div>
+                          <div style={{fontSize:11,color:"#6b7280"}}>Matrícula: {m.mat} · {m.crm}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <Input label="Hospital/Unidade" value={form.hospital||""} onChange={e=>set("hospital",e.target.value)}/>
+                    <Input label="CRM/CRO" value={form.crm||""} onChange={e=>set("crm",e.target.value)}/>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Input label="Nome do médico" value={form.medico||""} onChange={e=>set("medico",e.target.value)}/>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <Input label="Hospital/Unidade" value={form.hospital||""} onChange={e=>set("hospital",e.target.value)}/>
+                    <Input label="CRM/CRO" value={form.crm||""} onChange={e=>set("crm",e.target.value)}/>
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -3283,6 +3424,14 @@ function ModSaude({ officers, afastamentos, setAfastamentos, setOfficers, logged
           titulo={`Nova inspeção de JMS em até 15 dias (${jmsAlerta.length})`}
           linhas={jmsAlerta.map(a=>{const o=getOfficer(a.policialId);const diff=Math.ceil((new Date(a.novaInspDia+"T12:00:00")-hoje)/(24*3600*1000));return `${o?.grau||""} ${o?.nome||""} — inspeção em ${diff} dia(s) (${fmtDate(a.novaInspDia)})`;}) }
           chaveStorage="jms_insp_ciente"
+        />
+      )}
+
+      {/* Alerta JMS ATRASADAS */}
+      {jmsAtrasadas.length>0 && (
+        <AlertaBanner cor="#fff1f2" borda="#e11d48" icone="🚨"
+          titulo={`Inspeção médica ATRASADA — ${jmsAtrasadas.length} policial(is)`}
+          linhas={jmsAtrasadas.map(a=>{const o=getOfficer(a.policialId);const diff=Math.abs(Math.ceil((new Date(a.novaInspDia+"T12:00:00")-hoje)/(24*3600*1000)));return `${o?.grau||""} ${o?.nome||""} — deveria ter sido inspecionado(a) em ${fmtDate(a.novaInspDia)} (há ${diff} dia(s))`;}) }
         />
       )}
 
