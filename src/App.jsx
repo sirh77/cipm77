@@ -1317,9 +1317,11 @@ function PolicialDetail({ officer, onClose, onEdit, perm, ferias, afastamentos, 
                     {part.periodoAqDe && <div style={{fontSize:11,color:"#9ca3af"}}>P.A.: {part.periodoAqDe}/{part.periodoAqAte}</div>}
                     {part.status==="suspensa" && part.suspensao && (
                       <div style={{marginTop:6,background:"#fee2e2",borderRadius:5,padding:"5px 8px",fontSize:11}}>
-                        <strong>Suspensa a partir de:</strong> {fmtDate(part.suspensao.dataInicio)}<br/>
+                        <strong>Suspensa:</strong> {fmtDate(part.suspensao.dataInicio)}{part.suspensao.dataFim?` até ${fmtDate(part.suspensao.dataFim)}`:""}<br/>
+                        {part.suspensao.saldo!=null&&<span style={{color:"#065f46",fontWeight:600}}>Saldo: {part.suspensao.saldo} dia(s) · </span>}
                         <strong>Motivo:</strong> {part.suspensao.motivo}<br/>
                         {part.suspensao.bgo && <span><strong>BGO:</strong> {part.suspensao.bgo}</span>}
+                        {part.suspensao.observacao && <span> — {part.suspensao.observacao}</span>}
                       </div>
                     )}
                     <div style={{fontSize:10,color:"#9ca3af",marginTop:4}}>↗ Clique para abrir o planejamento</div>
@@ -1910,7 +1912,7 @@ function ModFerias({ officers, ferias, setFerias, loggedUser, initialDetalhe, on
   const [detalhe, setDetalhe] = useState(null);
   const [modalNovo, setModalNovo] = useState(false);
   const [modalSuspensao, setModalSuspensao] = useState(null); // {plan, partId}
-  const [formSuspensao, setFormSuspensao] = useState({dataInicio:"",motivo:"",bgo:""});
+  const [formSuspensao, setFormSuspensao] = useState({dataInicio:"",dataFim:"",motivo:"",bgo:"",observacao:""});
 
   useEffect(()=>{
     if (initialDetalhe) { setDetalhe(initialDetalhe); if(onDetalheConsumed) onDetalheConsumed(); }
@@ -2097,22 +2099,49 @@ function ModFerias({ officers, ferias, setFerias, loggedUser, initialDetalhe, on
                 {o && <div style={{background:"#f0f4ff",borderRadius:7,padding:"8px 12px",marginBottom:12,fontSize:13}}>
                   <strong>{o.grau} {o.nome}</strong> — {plan?.titulo}
                 </div>}
-                <Input label="Data a partir de quando" type="date" value={formSuspensao.dataInicio} onChange={e=>setFormSuspensao(f=>({...f,dataInicio:e.target.value}))}/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <Input label="Data de início da suspensão" type="date" value={formSuspensao.dataInicio} onChange={e=>setFormSuspensao(f=>({...f,dataInicio:e.target.value}))}/>
+                  <Input label="Data de fim da suspensão" type="date" value={formSuspensao.dataFim} onChange={e=>setFormSuspensao(f=>({...f,dataFim:e.target.value}))}/>
+                </div>
+                {formSuspensao.dataInicio && formSuspensao.dataFim && (()=>{
+                  const part = ferias.find(f=>f.id===modalSuspensao?.planId)?.participantes?.find(p=>p.policialId===modalSuspensao?.partId);
+                  const d1=new Date(formSuspensao.dataInicio+"T12:00:00"), d2=new Date(formSuspensao.dataFim+"T12:00:00");
+                  const diasSusp=Math.max(0,Math.round((d2-d1)/(86400000))+1);
+                  const total=part&&part.dataInicio&&part.dataFim?Math.round((new Date(part.dataFim+"T12:00:00")-new Date(part.dataInicio+"T12:00:00"))/(86400000))+1:0;
+                  const diasAntes=part&&part.dataInicio?Math.max(0,Math.round((d1-new Date(part.dataInicio+"T12:00:00"))/(86400000))):0;
+                  const saldo=total-diasAntes;
+                  return <div style={{background:"#fef3c7",borderRadius:7,padding:"8px 12px",fontSize:12,color:"#92400e"}}>
+                    ⚠️ <strong>{diasSusp} dia(s) suspensos</strong> — dias gozados antes da suspensão: {diasAntes} — <strong>Saldo a gozar: {saldo} dia(s)</strong>
+                  </div>;
+                })()}
                 <Textarea label="Motivo" value={formSuspensao.motivo} onChange={e=>setFormSuspensao(f=>({...f,motivo:e.target.value}))} rows={2}/>
                 <Input label="Nº do BGO de publicação" value={formSuspensao.bgo} onChange={e=>setFormSuspensao(f=>({...f,bgo:e.target.value}))} placeholder="BGO Nº 001 DE 2026"/>
+                <Textarea label="Observação" value={formSuspensao.observacao||""} onChange={e=>setFormSuspensao(f=>({...f,observacao:e.target.value}))} rows={2} placeholder="Ex: saldo de X dias a gozar em data posterior..."/>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
                   <Btn variant="secondary" onClick={()=>setModalSuspensao(null)}>Cancelar</Btn>
                   <Btn variant="danger" onClick={()=>{
-                    if (!formSuspensao.dataInicio||!formSuspensao.motivo){alert("Preencha data e motivo.");return;}
+                    if (!formSuspensao.dataInicio||!formSuspensao.motivo){alert("Preencha data de início e motivo.");return;}
                     const updPlan = ferias.find(f=>f.id===modalSuspensao.planId);
                     if (!updPlan) return;
+                    const part=updPlan.participantes?.find(p=>p.policialId===modalSuspensao.partId);
+                    const d1=new Date(formSuspensao.dataInicio+"T12:00:00");
+                    const d2=formSuspensao.dataFim?new Date(formSuspensao.dataFim+"T12:00:00"):null;
+                    const diasSusp=d2?Math.max(0,Math.round((d2-d1)/(86400000))+1):null;
+                    const total=part&&part.dataInicio&&part.dataFim?Math.round((new Date(part.dataFim+"T12:00:00")-new Date(part.dataInicio+"T12:00:00"))/(86400000))+1:0;
+                    const diasAntes=part&&part.dataInicio?Math.max(0,Math.round((d1-new Date(part.dataInicio+"T12:00:00"))/(86400000))):0;
+                    const saldo=total&&diasSusp!=null?total-diasAntes:null;
                     const updated = {...updPlan, participantes:(updPlan.participantes||[]).map(p=>
-                      p.policialId===modalSuspensao.partId ? {...p, status:"suspensa", suspensao:{dataInicio:formSuspensao.dataInicio,motivo:formSuspensao.motivo,bgo:formSuspensao.bgo}} : p
+                      p.policialId===modalSuspensao.partId ? {...p, status:"suspensa", suspensao:{
+                        dataInicio:formSuspensao.dataInicio,dataFim:formSuspensao.dataFim,
+                        motivo:formSuspensao.motivo,bgo:formSuspensao.bgo,
+                        observacao:formSuspensao.observacao,diasSuspensos:diasSusp,
+                        diasAntes,saldo
+                      }} : p
                     )};
                     setFerias(fs=>fs.map(f=>f.id===updated.id?updated:f));
                     if (detalhe?.id===updated.id) setDetalhe(updated);
                     setModalSuspensao(null);
-                    setFormSuspensao({dataInicio:"",motivo:"",bgo:""});
+                    setFormSuspensao({dataInicio:"",dataFim:"",motivo:"",bgo:"",observacao:""});
                   }}>🔴 Confirmar suspensão</Btn>
                 </div>
               </>
@@ -2152,6 +2181,41 @@ function ModFerias({ officers, ferias, setFerias, loggedUser, initialDetalhe, on
                     `<div style="font-size:11px;color:#555;margin-bottom:8px;font-family:Arial,sans-serif;">${partsOrd.length} policial(is)</div>`+
                     tabelaHTML(cols,linhas)+rodape(loggedUser));
                 }}>📄 Imprimir plano</Btn>
+                <Btn small onClick={()=>{
+                  import('xlsx').then(XLSX=>{
+                    const partsOrd=[...(detalhe.participantes||[])].sort((a,b)=>{
+                      const oa=officers.find(x=>x.id===a.policialId)||{};
+                      const ob=officers.find(x=>x.id===b.policialId)||{};
+                      return rankSort(oa,ob);
+                    });
+                    const fmtD=v=>{if(!v)return"—";try{return new Date(v+"T12:00:00").toLocaleDateString("pt-BR");}catch{return v;}};
+                    const header=["Nº","GRADUAÇÃO","NOME","MATRÍCULA","TIPO","LANÇAMENTO","P.A. DE","P.A. ATÉ","INÍCIO","FIM","STATUS","SUSPENSA DE","SUSPENSA ATÉ","DIAS SUSPENSOS","SALDO A GOZAR","MOTIVO SUSPENSÃO","OBSERVAÇÃO"];
+                    const rows=partsOrd.map((p,i)=>{
+                      const o=officers.find(x=>x.id===p.policialId)||{};
+                      const s=p.suspensao||{};
+                      return[
+                        i+1,o.grau||"",o.nome||"",cleanMat(o.matricula),
+                        p.tipo||"FÉRIAS",
+                        p.tipoLancamento==="sistema"?"Apenas Sistema":"Gozo",
+                        p.periodoAqDe||detalhe.periodoAqDe||"",
+                        p.periodoAqAte||detalhe.periodoAqAte||"",
+                        fmtD(p.dataInicio),fmtD(p.dataFim),
+                        p.status==="suspensa"?"Suspensa":p.status==="executada"?"Executada":p.status==="em_andamento"?"Em andamento":p.status==="concluida"?"Concluída":"Planejada",
+                        s.dataInicio?fmtD(s.dataInicio):"—",
+                        s.dataFim?fmtD(s.dataFim):"—",
+                        s.diasSuspensos!=null?s.diasSuspensos:"—",
+                        s.saldo!=null?s.saldo:"—",
+                        s.motivo||"—",
+                        p.observacao||s.observacao||"—"
+                      ];
+                    });
+                    const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
+                    ws["!cols"]=[{wch:4},{wch:14},{wch:34},{wch:14},{wch:14},{wch:14},{wch:8},{wch:8},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14},{wch:12},{wch:26},{wch:30}];
+                    const wb=XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb,ws,"Férias");
+                    XLSX.writeFile(wb,`Ferias_${detalhe.titulo.replace("/","_")}.xlsx`);
+                  }).catch(()=>alert("Erro ao gerar Excel."));
+                }}>📊 Excel</Btn>
                 <Btn small variant={detalhe.concluido?"secondary":"success"} onClick={()=>toggleEncerrar(detalhe)}>
                   {detalhe.concluido?"↩ Reabrir":"✅ Encerrar"}
                 </Btn>
@@ -2279,7 +2343,53 @@ function ModFerias({ officers, ferias, setFerias, loggedUser, initialDetalhe, on
                             style={{width:"100%",padding:"5px 6px",border:"1px solid #d1d5db",borderRadius:6,fontSize:11,outline:"none"}}/>
                         </div>
                       </div>
-                      {p.tipo==="LICENÇA-PRÊMIO"&&<div style={{marginTop:6,background:"#f0fdf4",borderRadius:5,padding:"4px 8px",fontSize:10,color:"#15803d"}}>ℹ️ Não entra na contagem de férias</div>}
+                      {/* Tipo lançamento + Observação */}
+                      <div style={{display:"grid",gridTemplateColumns:"160px 1fr",gap:6,marginTop:6}}>
+                        <div>
+                          <label style={{fontSize:10,color:"#6b7280",display:"block",marginBottom:2}}>Lançamento</label>
+                          <select value={p.tipoLancamento||"gozo"} disabled={detalhe.concluido}
+                            onChange={e=>{
+                              const tl=e.target.value;
+                              // Warn if switching to gozo and saldo insuficiente
+                              if(tl==="gozo"){
+                                const totalDias=p.dataInicio&&p.dataFim?Math.round((new Date(p.dataFim+"T12:00:00")-new Date(p.dataInicio+"T12:00:00"))/(86400000))+1:0;
+                                // Find credit from previous suspended entry for same person
+                                let credito=null;
+                                ferias.forEach(f=>{(f.participantes||[]).forEach(x=>{
+                                  if(x.policialId===p.policialId&&x.id!==p.id&&x.status==="suspensa"&&x.suspensao?.saldo!=null)
+                                    credito=x.suspensao.saldo;
+                                });});
+                                if(credito!=null&&totalDias>credito)
+                                  alert(`⚠️ Atenção: o policial tem saldo de ${credito} dia(s) de férias.
+Este lançamento é de ${totalDias} dia(s).`);
+                              }
+                              atualizarP(detalhe,p.id,"tipoLancamento",tl);
+                            }}
+                            style={{width:"100%",padding:"5px 6px",border:"1px solid #d1d5db",borderRadius:6,fontSize:11,
+                              background:p.tipoLancamento==="sistema"?"#fffbeb":"#fff",
+                              color:p.tipoLancamento==="sistema"?"#92400e":"#374151",fontWeight:p.tipoLancamento==="sistema"?600:400}}>
+                            <option value="gozo">🏖 Gozo (padrão)</option>
+                            <option value="sistema">⚙️ Apenas Sistema</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{fontSize:10,color:"#6b7280",display:"block",marginBottom:2}}>Observação</label>
+                          <input value={p.observacao||""} disabled={detalhe.concluido}
+                            onChange={e=>atualizarP(detalhe,p.id,"observacao",e.target.value)}
+                            placeholder="Ex: saldo de 5 dias a gozar em data posterior..."
+                            style={{width:"100%",padding:"5px 6px",border:"1px solid #d1d5db",borderRadius:6,fontSize:11,outline:"none"}}/>
+                        </div>
+                      </div>
+                      {p.tipoLancamento==="sistema"&&<div style={{marginTop:4,background:"#fef3c7",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#92400e"}}>⚙️ Apenas no sistema — gozo será em outro mês</div>}
+                      {p.tipo==="LICENÇA-PRÊMIO"&&<div style={{marginTop:4,background:"#f0fdf4",borderRadius:5,padding:"3px 8px",fontSize:10,color:"#15803d"}}>ℹ️ Não entra na contagem de férias</div>}
+                      {p.status==="suspensa"&&p.suspensao&&(
+                        <div style={{marginTop:4,background:"#fee2e2",borderRadius:5,padding:"5px 8px",fontSize:10}}>
+                          🔴 <strong>Suspensa:</strong> {fmtDate(p.suspensao.dataInicio)}{p.suspensao.dataFim?` até ${fmtDate(p.suspensao.dataFim)}`:""} ·{" "}
+                          {p.suspensao.saldo!=null&&<span style={{color:"#065f46",fontWeight:600}}>Saldo: {p.suspensao.saldo} dia(s) · </span>}
+                          {p.suspensao.motivo}
+                          {p.suspensao.observacao&&<span> · {p.suspensao.observacao}</span>}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
